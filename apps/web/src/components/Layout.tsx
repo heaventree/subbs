@@ -12,6 +12,7 @@ import {
   MessageSquare,
   Settings,
   Shield,
+  Wallet,
   X,
 } from "lucide-react";
 import { useState } from "react";
@@ -31,6 +32,7 @@ const baseNavItems = [
   { key: "subscriptions", path: "/subscriptions" as const, icon: CreditCard },
   { key: "calendar", path: "/calendar" as const, icon: Calendar },
   { key: "statistics", path: "/statistics" as const, icon: BarChart2 },
+  { key: "import", path: "/import" as const, icon: Wallet },
   { key: "settings", path: "/settings" as const, icon: Settings },
 ];
 

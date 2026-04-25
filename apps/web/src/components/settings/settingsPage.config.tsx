@@ -13,11 +13,13 @@ import {
   TrendingUp,
   User,
   Users,
+  Wallet,
 } from "lucide-react";
 import type { ComponentType } from "react";
 
 import { AITab } from "@/components/settings/ai/AITab";
 import { ApiKeyTab } from "@/components/settings/api-keys/ApiKeyTab";
+import { BudgetBakersTab } from "@/components/settings/budgetbakers/BudgetBakersTab";
 import { CategoriesTab } from "@/components/settings/categories/CategoriesTab";
 import { CurrenciesTab } from "@/components/settings/currencies/CurrenciesTab";
 import { DeleteAccountTab } from "@/components/settings/delete-account/DeleteAccountTab";
@@ -44,6 +46,7 @@ export type SettingsTabKey =
   | "ai"
   | "api_key"
   | "exchange_rates"
+  | "budgetbakers"
   | "delete";
 
 export const SETTINGS_TAB_COMPONENTS: Record<SettingsTabKey, ComponentType> = {
@@ -59,6 +62,7 @@ export const SETTINGS_TAB_COMPONENTS: Record<SettingsTabKey, ComponentType> = {
   ai: AITab,
   api_key: ApiKeyTab,
   exchange_rates: FixerTab,
+  budgetbakers: BudgetBakersTab,
   delete: DeleteAccountTab,
 };
 
@@ -85,6 +89,11 @@ export function getSettingsPageMenuItems(
       value: "exchange_rates",
       label: t("fixer_api"),
       icon: TrendingUp,
+    },
+    {
+      value: "budgetbakers",
+      label: "BudgetBakers",
+      icon: Wallet,
     },
     {
       value: "delete",
