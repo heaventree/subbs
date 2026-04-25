@@ -290,3 +290,76 @@ export type FilterState = {
 
 export type SettingsSearch = { tab?: string };
 export type AdminSearch = { tab?: string };
+
+// ─── BudgetBakers ─────────────────────────────────────────────────────────────
+
+export interface BBSettings {
+  id: string;
+  user: string;
+  connected: boolean;
+  last_synced?: string;
+  token_expires?: string;
+  selected_wallet_ids?: string[];
+  auto_sync?: boolean;
+}
+
+export interface BBStatus {
+  connected: boolean;
+  last_synced: string | null;
+  pending_count?: number;
+}
+
+export interface BBWallet {
+  id: string;
+  name: string;
+  currency: string;
+  balance: number;
+  is_selected: boolean;
+}
+
+export interface BBWalletsResponse {
+  wallets: BBWallet[];
+  selected_wallet_ids: string[];
+}
+
+export type BBDetectedStatus = "pending" | "confirmed" | "dismissed" | "imported";
+export type BBCycle = "daily" | "weekly" | "monthly" | "yearly";
+
+export interface BBDetected {
+  id: string;
+  user: string;
+  name: string;
+  normalized_name: string;
+  amount: number;
+  currency_code: string;
+  cycle: BBCycle;
+  frequency: number;
+  last_charged: string;
+  next_expected: string;
+  status: BBDetectedStatus;
+  transaction_count: number;
+  confidence: number;
+  subscription?: string;
+  transaction_ids?: string[];
+  created?: string;
+  updated?: string;
+}
+
+export interface BBSyncResult {
+  transactions_synced: number;
+  subscriptions_detected: number;
+  new: number;
+  updated: number;
+}
+
+export interface BBImportPayload {
+  name?: string;
+  price?: number;
+  currency_code?: string;
+  next_payment?: string;
+  start_date?: string;
+  notes?: string;
+  category?: string;
+  payment_method?: string;
+  cycle?: string;
+}
