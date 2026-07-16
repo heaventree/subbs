@@ -184,6 +184,7 @@ CREATE TABLE vendor_override (
   vendor_id     uuid PRIMARY KEY REFERENCES vendor(id) ON DELETE CASCADE,
   status        text,              -- active|review|paused|cancelled
   is_recurring  boolean,
+  owner         text,              -- heaventree|personal (pre-Phase-3 light split)
   updated_at    timestamptz NOT NULL DEFAULT now()
 );
 

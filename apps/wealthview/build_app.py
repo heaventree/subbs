@@ -5,7 +5,8 @@ import json
 with open('/tmp/spendly2_data.json') as f:
     data_json = f.read()
 
-BFKEY = ''  # set your Brandfetch API key here (do not commit)
+BFKEY = ''  # Brandfetch key here (do not commit)
+DSKEY = ''  # DeepSeek key here (do not commit)
 
 TEMPLATE = r'''<!doctype html>
 <html lang="en">
@@ -245,6 +246,7 @@ select.form-in{cursor:pointer}
 // ═════════════ DATA ═════════════
 const RAW=__DATA__;
 const BFKEY=localStorage.getItem('wv_bfkey')||'__BFKEY__';
+const DSKEY=()=>localStorage.getItem('wv_dskey')||'__DSKEY__';
 const LOGOC={};
 
 // Expand compact tx: [date, vendorIdx, amount, catIdx, type, recurring]
@@ -272,11 +274,13 @@ const S={view:'dashboard',range:12,
   assets:JSON.parse(localStorage.getItem('wv_assets')||'[]'),
   nwHist:JSON.parse(localStorage.getItem('wv_nwhist')||'[]'),
   rSearch:'',rGroup:'',rMin:3,rSort:'avg',rDir:-1,
-  sSearch:'',sGroup:'',sStatus:'',sSort:'cost',
+  owner:JSON.parse(localStorage.getItem('wv_owner')||'{}'),   // vendorId -> heaventree|personal
+  amtMode:localStorage.getItem('wv_amtmode')||'last',          // last | typical
+  sSearch:'',sGroup:'',sStatus:'',sSort:'cost',sOwner:'',rOwner:'',tOwner:'',
   tSearch:'',tType:'all',tGroup:'',tCat:'',tYear:'',tMin:'',tMax:'',tRec:'',tPage:1,tSort:'d',tDir:-1,
   cfYear:'',
 };
-function save(){['ov','rec','rules','assets','nwHist'].forEach(k=>localStorage.setItem('wv_'+(k==='nwHist'?'nwhist':k),JSON.stringify(S[k])));}
+function save(){['ov','rec','rules','assets','nwHist','owner'].forEach(k=>localStorage.setItem('wv_'+(k==='nwHist'?'nwhist':k),JSON.stringify(S[k])));localStorage.setItem('wv_amtmode',S.amtMode);}
 
 // ═════════════ HELPERS ═════════════
 const fmt=n=>new Intl.NumberFormat('en-IE',{style:'currency',currency:'EUR',minimumFractionDigits:2}).format(n);
@@ -301,6 +305,27 @@ function detectSub(v){
   return coverage>=0.4 && perMonth<=1.6;
 }
 function isRecurring(v){ if(S.rec[v.id]!==undefined)return S.rec[v.id]; return detectSub(v); }
+// Most recent expense charge for a vendor (TX is sorted newest-first)
+function lastAmt(v){const ids=VTX[v.idx]||[];for(const i of ids){if(TX[i].t==='e')return TX[i].a;}return 0;}
+// How much the monthly amount wobbles: (max-min)/median over last 12 active months
+function variability(v){
+  const per={};(VTX[v.idx]||[]).forEach(i=>{const t=TX[i];if(t.t!=='e')return;const m=t.d.slice(0,7);per[m]=(per[m]||0)+t.a;});
+  const vals=Object.keys(per).sort().slice(-12).map(k=>per[k]);
+  if(vals.length<3)return 0;
+  const sorted=[...vals].sort((a,b)=>a-b);
+  const med=sorted[Math.floor(sorted.length/2)]||1;
+  return (sorted[sorted.length-1]-sorted[0])/med;
+}
+// Cost basis per user's toggle: last real payment vs typical (median)
+function subCost(v){return S.amtMode==='last'?(lastAmt(v)||typical(v)):typical(v);}
+function ownerOf(v){return S.owner[v.id]||'';}
+function setOwner(id,o){if(o)S.owner[id]=o;else delete S.owner[id];save();if(RENDER[S.view])RENDER[S.view]();toast('Owner → '+(o||'unassigned'));}
+function ownerChips(v){
+  const o=ownerOf(v);
+  return `<span style="display:inline-flex;gap:4px">
+<span onclick="event.stopPropagation();setOwner('${v.id}',${o==='heaventree'?"''":"'heaventree'"})" title="Heaventree (business)" style="cursor:pointer;width:22px;height:22px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;border:1px solid ${o==='heaventree'?'var(--accent)':'var(--border)'};background:${o==='heaventree'?'var(--accent-12)':'transparent'};color:${o==='heaventree'?'var(--accent-h)':'var(--dimmed)'}">H</span>
+<span onclick="event.stopPropagation();setOwner('${v.id}',${o==='personal'?"''":"'personal'"})" title="Personal" style="cursor:pointer;width:22px;height:22px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;border:1px solid ${o==='personal'?'#EC4899':'var(--border)'};background:${o==='personal'?'rgba(236,72,153,.12)':'transparent'};color:${o==='personal'?'#F9A8D4':'var(--dimmed)'}">P</span></span>`;
+}
 function vStatus(v){
   if(S.ov[v.id])return S.ov[v.id];
   const days=(new Date(CURM+'-28')-new Date(v.last))/864e5;
@@ -378,7 +403,7 @@ RENDER.dashboard=function(){
   const cur=MSER[CURM];
   const nw=nwTotal();
   const recV=V.filter(v=>v.type==='e'&&isRecurring(v)&&vStatus(v)!=='lapsed'&&vStatus(v)!=='cancelled');
-  const recMo=sum(recV,v=>typical(v));
+  const recMo=sum(recV,v=>subCost(v));
 
   const maxB=Math.max(...mo.map(m=>Math.max(MSER[m].inc,MSER[m].exp)));
   const maxY=Math.ceil(maxB/2000)*2000;const H=200;
@@ -415,7 +440,7 @@ RENDER.dashboard=function(){
   <div class="kpi"><div class="kpi-l">Life Running Cost <span style="color:var(--expense-t)">&#9201;</span></div><div class="kpi-v mono">${fmt0(burn3)}</div><div class="kpi-s">avg monthly spend · last 3 mo</div></div>
   <div class="kpi"><div class="kpi-l">Avg Income / mo <span style="color:var(--income-t)">&#8599;</span></div><div class="kpi-v mono">${fmt0(inc3)}</div><div class="kpi-s">last 3 complete months</div></div>
   <div class="kpi"><div class="kpi-l">Recurring / mo <span>&#8635;</span></div><div class="kpi-v mono">${fmt0(recMo)}</div><div class="kpi-s">${recV.length} active recurring vendors</div></div>
-  <div class="kpi"><div class="kpi-l">${fmtM(CURM)} so far</div><div class="kpi-v mono" style="color:${cur.inc-cur.exp>=0?'var(--income-t)':'var(--expense-t)'}">${cur.inc-cur.exp>=0?'+':''}${fmt0(cur.inc-cur.exp)}</div><div class="kpi-s">in ${fmt0(cur.inc)} · out ${fmt0(cur.exp)}</div></div>
+  <div class="kpi"><div class="kpi-l">${fmtM(CURM)} so far</div><div class="kpi-v mono" style="color:${cur.inc-cur.exp>=0?'var(--income-t)':'var(--expense-t)'}">${cur.inc-cur.exp>=0?'+':''}${fmt0(cur.inc-cur.exp)}</div><div class="kpi-s">in ${fmt0(cur.inc)} · out ${fmt0(cur.exp)} · <span style="color:var(--expense-t)">${MONTHS.slice(-12).filter(m=>MSER[m].inc-MSER[m].exp<0).length} red mo/12</span></div></div>
 </div>
 <div class="chart-row">
   <div class="chart-card">
@@ -544,6 +569,7 @@ function runList(){
   let l=V.filter(v=>v.type==='e'&&v.count>=S.rMin);
   if(S.rSearch){const q=S.rSearch.toLowerCase();l=l.filter(v=>v.name.toLowerCase().includes(q)||v.group.toLowerCase().includes(q));}
   if(S.rGroup)l=l.filter(v=>v.group===S.rGroup);
+  if(S.rOwner)l=l.filter(v=>S.rOwner==='unassigned'?!ownerOf(v):ownerOf(v)===S.rOwner);
   const key={avg:v=>v.avgMonthly,total:v=>v.total,count:v=>v.count,last:v=>v.last,name:v=>v.name};
   const f=key[S.rSort]||key.avg;
   l.sort((a,b)=>{const x=f(a),y=f(b);return(x<y?-1:x>y?1:0)*S.rDir;});
@@ -578,6 +604,7 @@ RENDER.running=function(){
 <div class="filter-bar">
   <div class="srch"><span class="si">&#128269;</span><input placeholder="Search vendors…" value="${esc(S.rSearch)}" oninput="S.rSearch=this.value;RENDER.running()"></div>
   <select class="flt" onchange="S.rGroup=this.value;RENDER.running()"><option value="">All groups</option>${groups.map(g=>`<option ${S.rGroup===g?'selected':''}>${g}</option>`).join('')}</select>
+  <select class="flt" onchange="S.rOwner=this.value;RENDER.running()"><option value="">All owners</option><option value="heaventree"${S.rOwner==='heaventree'?' selected':''}>Heaventree</option><option value="personal"${S.rOwner==='personal'?' selected':''}>Personal</option><option value="unassigned"${S.rOwner==='unassigned'?' selected':''}>Unassigned</option></select>
   <select class="flt" onchange="S.rMin=+this.value;RENDER.running()"><option value="1"${S.rMin===1?' selected':''}>Min 1 charge</option><option value="2"${S.rMin===2?' selected':''}>Min 2</option><option value="3"${S.rMin===3?' selected':''}>Min 3</option><option value="6"${S.rMin===6?' selected':''}>Min 6</option><option value="12"${S.rMin===12?' selected':''}>Min 12</option></select>
   <select class="flt" onchange="const[k,d]=this.value.split(':');S.rSort=k;S.rDir=+d;RENDER.running()">
     <option value="avg:-1">Avg/mo: high &#8594; low</option><option value="total:-1"${S.rSort==='total'?' selected':''}>Lifetime total</option>
@@ -595,9 +622,10 @@ function subsList(){
   if(S.sSearch){const q=S.sSearch.toLowerCase();l=l.filter(v=>v.name.toLowerCase().includes(q));}
   if(S.sGroup)l=l.filter(v=>v.group===S.sGroup);
   if(S.sStatus)l=l.filter(v=>vStatus(v)===S.sStatus);
+  if(S.sOwner)l=l.filter(v=>S.sOwner==='unassigned'?!ownerOf(v):ownerOf(v)===S.sOwner);
   if(S.sSort==='name')l.sort((a,b)=>a.name.localeCompare(b.name));
   else if(S.sSort==='last')l.sort((a,b)=>b.last<a.last?-1:b.last>a.last?1:0);
-  else l.sort((a,b)=>typical(b)-typical(a));
+  else l.sort((a,b)=>subCost(b)-subCost(a));
   return l;
 }
 RENDER.subs=function(){
@@ -605,10 +633,12 @@ RENDER.subs=function(){
   const all=V.filter(v=>v.type==='e'&&isRecurring(v));
   const l=subsList();
   const act=all.filter(v=>['active','review'].includes(vStatus(v)));
-  const mo=sum(act,v=>typical(v));
+  const mo=sum(act,v=>subCost(v));
   const groups=[...new Set(all.map(v=>v.group))].sort();
   const cards=l.slice(0,120).map(v=>{
-    const st=vStatus(v);const m3=typical(v);
+    const st=vStatus(v);const m3=subCost(v);
+  const other=S.amtMode==='last'?typical(v):lastAmt(v);
+  const vr=variability(v);
     return `<div class="sub-card">
 <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
   <div style="display:flex;align-items:center;gap:11px;min-width:0">${avHtml(v,38,'sv')}
@@ -620,8 +650,8 @@ RENDER.subs=function(){
     </div></div>
 </div>
 <div style="margin-top:14px;display:flex;align-items:flex-end;justify-content:space-between">
-  <div><div class="mono" style="font-size:21px;font-weight:600">${fmt(m3||v.avgMonthly)}</div><div style="font-size:10.5px;color:var(--dimmed)">per month (typical)</div></div>
-  <span class="badge b-cycle">${v.count}&times; lifetime</span>
+  <div><div class="mono" style="font-size:21px;font-weight:600">${fmt(m3||v.avgMonthly)}</div><div style="font-size:10.5px;color:var(--dimmed)">${S.amtMode==='last'?'last payment':'typical / month'} · ${S.amtMode==='last'?'avg '+fmt0(other):'last '+fmt0(other)}</div></div>
+  <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${vr>0.25?`<span class="badge" style="background:rgba(245,158,11,.12);color:var(--warn);border-radius:6px" title="amount varies month to month">~ varies ±${Math.round(vr*50)}%</span>`:''}<span class="badge b-cycle">${v.count}&times; lifetime</span></div>
 </div>
 <div style="margin-top:13px;padding-top:13px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:5px;font-size:12px">
   <div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">Last charge</span><span class="mono">${fmtD(v.last)}</span></div>
@@ -631,7 +661,7 @@ RENDER.subs=function(){
   }).join('');
   el.innerHTML=`
 <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
-  <div class="kpi"><div class="kpi-l">Monthly recurring</div><div class="kpi-v mono">${fmt0(mo)}</div><div class="kpi-s">active + review, typical monthly</div></div>
+  <div class="kpi"><div class="kpi-l">Monthly recurring</div><div class="kpi-v mono">${fmt0(mo)}</div><div class="kpi-s">active + review · ${S.amtMode==='last'?'last payments':'typical (median)'}</div></div>
   <div class="kpi"><div class="kpi-l">Annual projection</div><div class="kpi-v mono">${fmt0(mo*12)}</div></div>
   <div class="kpi"><div class="kpi-l">Recurring vendors</div><div class="kpi-v mono">${all.length}</div><div class="kpi-s">${act.length} currently active</div></div>
   <div class="kpi"><div class="kpi-l">Need review</div><div class="kpi-v mono" style="color:var(--warn)">${all.filter(v=>vStatus(v)==='review').length}</div><div class="kpi-s">not charged in 50–100 days</div></div>
@@ -644,7 +674,9 @@ RENDER.subs=function(){
   <div class="srch"><span class="si">&#128269;</span><input placeholder="Search…" value="${esc(S.sSearch)}" oninput="S.sSearch=this.value;RENDER.subs()"></div>
   <select class="flt" onchange="S.sGroup=this.value;RENDER.subs()"><option value="">All groups</option>${groups.map(g=>`<option ${S.sGroup===g?'selected':''}>${g}</option>`).join('')}</select>
   <select class="flt" onchange="S.sStatus=this.value;RENDER.subs()"><option value="">All statuses</option>${['active','review','paused','cancelled','lapsed'].map(s=>`<option ${S.sStatus===s?'selected':''}>${s}</option>`).join('')}</select>
+  <select class="flt" onchange="S.sOwner=this.value;RENDER.subs()"><option value="">All owners</option><option value="heaventree"${S.sOwner==='heaventree'?' selected':''}>Heaventree</option><option value="personal"${S.sOwner==='personal'?' selected':''}>Personal</option><option value="unassigned"${S.sOwner==='unassigned'?' selected':''}>Unassigned</option></select>
   <select class="flt" onchange="S.sSort=this.value;RENDER.subs()"><option value="cost"${S.sSort==='cost'?' selected':''}>Sort: cost/mo</option><option value="name"${S.sSort==='name'?' selected':''}>Sort: name</option><option value="last"${S.sSort==='last'?' selected':''}>Sort: last charge</option></select>
+  <div class="seg" title="How to price variable bills"><button class="${S.amtMode==='last'?'active':''}" onclick="S.amtMode='last';save();RENDER.subs()">Last payment</button><button class="${S.amtMode==='typical'?'active':''}" onclick="S.amtMode='typical';save();RENDER.subs()">Average</button></div>
   <span class="res-ct">${l.length} subscriptions</span>
 </div>
 <div class="cards-grid">${cards||'<div class="empty" style="grid-column:1/-1"><div class="empty-ic">&#128269;</div><div>Nothing matches</div></div>'}</div>`;
@@ -668,6 +700,7 @@ function txList(){
   if(S.tMax)l=l.filter(t=>t.a<=+S.tMax);
   if(S.tRec==='rec')l=l.filter(t=>t.r);
   if(S.tRec==='one')l=l.filter(t=>!t.r);
+  if(S.tOwner)l=l.filter(t=>S.tOwner==='unassigned'?!ownerOf(t.vendor):ownerOf(t.vendor)===S.tOwner);
   if(S.tSort==='a')l=[...l].sort((x,y)=>(x.a-y.a)*S.tDir);
   else if(S.tSort==='d'&&S.tDir===1)l=[...l].reverse();
   return l;
@@ -699,6 +732,7 @@ RENDER.tx=function(){
   <select class="flt" onchange="S.tCat=this.value;S.tPage=1;RENDER.tx()"><option value="">All categories</option>${[...new Set(catsIn.map(c=>c.name))].sort().map(c=>`<option ${S.tCat===c?'selected':''}>${c}</option>`).join('')}</select>
   <select class="flt" onchange="S.tYear=this.value;S.tPage=1;RENDER.tx()"><option value="">All years</option>${years.map(y=>`<option ${S.tYear===y?'selected':''}>${y}</option>`).join('')}</select>
   <select class="flt" onchange="S.tRec=this.value;S.tPage=1;RENDER.tx()"><option value="">Rec + one-off</option><option value="rec"${S.tRec==='rec'?' selected':''}>Recurring only</option><option value="one"${S.tRec==='one'?' selected':''}>One-off only</option></select>
+  <select class="flt" onchange="S.tOwner=this.value;S.tPage=1;RENDER.tx()"><option value="">All owners</option><option value="heaventree"${S.tOwner==='heaventree'?' selected':''}>Heaventree</option><option value="personal"${S.tOwner==='personal'?' selected':''}>Personal</option><option value="unassigned"${S.tOwner==='unassigned'?' selected':''}>Unassigned</option></select>
   <input class="flt-n" type="number" placeholder="Min €" value="${S.tMin}" oninput="S.tMin=this.value;S.tPage=1;RENDER.tx()">
   <input class="flt-n" type="number" placeholder="Max €" value="${S.tMax}" oninput="S.tMax=this.value;S.tPage=1;RENDER.tx()">
   <span class="res-ct">${l.length.toLocaleString()} tx · in <span style="color:var(--income-t)">${fmt0(ti)}</span> · out <span style="color:var(--expense-t)">${fmt0(te)}</span></span>
@@ -764,12 +798,14 @@ function vendorModal(idx){
 <span class="badge b-${st}" style="margin-left:8px"><span class="bdot"></span>${st}</span>
 <button class="modal-x" onclick="closeModal()">&#10005;</button></div>
 <div class="modal-bd">
-<div class="stat-grid">
-  <div class="stat"><div class="l">Avg / month</div><div class="v mono" style="color:var(--expense-t)">${fmt(v.avgMonthly)}</div></div>
+<div class="stat-grid" style="grid-template-columns:repeat(5,1fr)">
+  <div class="stat"><div class="l">Last payment</div><div class="v mono" style="color:var(--expense-t)">${fmt(lastAmt(v))}</div></div>
   <div class="stat"><div class="l">Typical / mo</div><div class="v mono" style="color:var(--warn)">${fmt(typical(v))}</div></div>
+  <div class="stat"><div class="l">Lifetime avg</div><div class="v mono">${fmt(v.avgMonthly)}</div></div>
   <div class="stat"><div class="l">Lifetime</div><div class="v mono">${fmt0(v.total)}</div></div>
-  <div class="stat"><div class="l">Charges</div><div class="v mono">${v.count}&times; over ${v.spanMonths} mo</div></div>
+  <div class="stat"><div class="l">Charges</div><div class="v mono">${v.count}&times; / ${v.spanMonths} mo</div></div>
 </div>
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><span style="font-size:12px;color:var(--muted)">Owner:</span>${ownerChips(v)}<span style="font-size:11px;color:var(--dimmed)">H = Heaventree (business) · P = Personal</span></div>
 <div style="display:flex;gap:8px;margin-bottom:6px">
   <button class="btn btn-sm ${rec?'btn-sec':'btn-primary'}" onclick="setRec('${v.id}',${!rec});vendorModal(${idx})">${rec?'&#8856; Mark not recurring':'&#8635; Mark as recurring'}</button>
   ${['active','review','cancelled'].map(s=>`<button class="btn btn-sm btn-sec" onclick="setSt('${v.id}','${s}');vendorModal(${idx})">Set ${s}</button>`).join('')}
@@ -855,7 +891,7 @@ function matchRule(v,r){
 }
 function applyOp(f,op,v){if(op==='contains')return f.includes(v);if(op==='starts')return f.startsWith(v);return f===v;}
 function ruleDesc(r){
-  const acts={rec:'mark recurring',notrec:'mark NOT recurring',active:'status active',review:'status review',cancelled:'status cancelled'};
+  const acts={rec:'mark recurring',notrec:'mark NOT recurring',active:'status active',review:'status review',cancelled:'status cancelled',own_h:'assign to Heaventree',own_p:'assign to Personal'};
   const fld={name:'vendor name',group:'group',count:'charge count ≥',avg:'avg €/mo ≥'};
   return `If ${fld[r.field]} ${['count','avg'].includes(r.field)?'':r.op+' '}"${r.value}" → ${acts[r.action]}`;
 }
@@ -881,7 +917,7 @@ RENDER.rules=function(){
       <select class="form-in" id="r-op" style="margin-bottom:7px" onchange="prv()"><option value="contains">contains</option><option value="starts">starts with</option><option value="equals">equals</option></select>
       <input class="form-in" id="r-value" placeholder="e.g. enix, paddle, 6, 50…" oninput="prv()"></div>
     <div class="form-grp"><div class="form-l">Action</div>
-      <select class="form-in" id="r-action"><option value="rec">Mark recurring</option><option value="notrec">Mark NOT recurring</option><option value="active">Set status active</option><option value="review">Set status review</option><option value="cancelled">Set status cancelled</option></select></div>
+      <select class="form-in" id="r-action"><option value="rec">Mark recurring</option><option value="notrec">Mark NOT recurring</option><option value="active">Set status active</option><option value="review">Set status review</option><option value="cancelled">Set status cancelled</option><option value="own_h">Assign to Heaventree</option><option value="own_p">Assign to Personal</option></select></div>
     <div id="r-prev" style="margin:10px 0"></div>
     <button class="btn btn-primary" onclick="addRule()">+ Add rule</button>
   </div>
@@ -912,6 +948,8 @@ function applyRules(){
   S.rules.forEach(r=>{V.forEach(v=>{if(v.type!=='e'||!matchRule(v,r))return;
     if(r.action==='rec'&&S.rec[v.id]!==true){S.rec[v.id]=true;ct++;}
     else if(r.action==='notrec'&&S.rec[v.id]!==false){S.rec[v.id]=false;ct++;}
+    else if(r.action==='own_h'&&S.owner[v.id]!=='heaventree'){S.owner[v.id]='heaventree';ct++;}
+    else if(r.action==='own_p'&&S.owner[v.id]!=='personal'){S.owner[v.id]='personal';ct++;}
     else if(['active','review','cancelled'].includes(r.action)&&S.ov[v.id]!==r.action){S.ov[v.id]=r.action;ct++;}});});
   save();toast(`Applied ${S.rules.length} rules → ${ct} changes`);RENDER.rules();
 }
@@ -932,6 +970,8 @@ RENDER.asst=function(){
   <div class="chip" onclick="ask('net worth')">&#9670; Net worth</div>
   <div class="chip" onclick="ask('subscriptions')">&#8635; Subscriptions</div>
   <div class="chip" onclick="ask('sync wallet')">&#128260; Sync BudgetBakers</div>
+  <div class="chip" onclick="aiAnomalies()" style="border-color:rgba(139,92,246,.5)">&#129504; AI anomaly scan</div>
+  <div class="chip" onclick="ask('why is my cashflow negative so often?')" style="border-color:rgba(139,92,246,.5)">&#129504; Why am I bleeding cash?</div>
   <div class="chip" onclick="ask('help')">? Help</div>
 </div>
 <div class="asst-input">
@@ -940,7 +980,7 @@ RENDER.asst=function(){
 </div></div>`;
   }
   if(!ASST_BOOTED){ASST_BOOTED=true;
-    botSay(`Hi Sean — I'm your Wealthview assistant. I can search your <span class="hl">7,540 transactions</span>, run totals and reports, manage assets, and pull fresh data from BudgetBakers.<br><br>Try the chips below or type <span class="hl">help</span>.`);}
+    botSay(`Hi Sean — I'm your Wealthview assistant. I can search your <span class="hl">7,540 transactions</span>, run totals and reports, split vendors Heaventree/Personal, and — with DeepSeek wired in — hunt anomalies and cash bleed.<br><br>Try the chips below or type <span class="hl">help</span>.`);}
 };
 function addMsg(html,who){
   const log=document.getElementById('a-log');
@@ -969,7 +1009,17 @@ function answer(q,raw){
 &#8226; <span class="hl">subscriptions</span> — recurring summary<br>
 &#8226; <span class="hl">net worth</span> / <span class="hl">add asset House 385000</span> / <span class="hl">add liability Mortgage 210000</span><br>
 &#8226; <span class="hl">mark &lt;vendor&gt; recurring</span> — e.g. "mark brixly recurring"<br>
-&#8226; <span class="hl">sync wallet</span> — pull latest from BudgetBakers`);return;}
+&#8226; <span class="hl">assign brennan to personal</span> — Heaventree / Personal split<br>
+&#8226; <span class="hl">sync wallet</span> — pull latest from BudgetBakers<br>
+&#8226; Anything else goes to <span class="hl">DeepSeek AI</span> (trends, anomalies, advice) when a key is set`);return;}
+  // set deepseek key
+  let mk=raw.match(/set deepseek key\s+(sk-\S+)/i);
+  if(mk){localStorage.setItem('wv_dskey',mk[1]);botSay('DeepSeek key saved — AI answers are now enabled.');return;}
+  // assign owner
+  mk=q.match(/assign\s+(.+?)\s+to\s+(heaventree|business|personal)/);
+  if(mk){const v=findVendor(mk[1]);if(!v){botSay(`Couldn't find "${esc(mk[1])}".`);return;}
+    const o=mk[2]==='personal'?'personal':'heaventree';S.owner[v.id]=o;save();
+    botSay(`<span class="hl">${esc(v.name)}</span> assigned to <b>${o==='personal'?'Personal':'Heaventree'}</b>.`);return;}
   // sync wallet
   if(/sync|budgetbakers|wallet|draw down|pull/.test(q)&&/sync|wallet|bakers|pull|draw/.test(q)){syncWallet();return;}
   // appsumo / lifetime deals
@@ -1050,10 +1100,11 @@ function answer(q,raw){
     const vs=V.filter(v=>v.name.toLowerCase().includes(term)).sort((a,b)=>b.total-a.total).slice(0,8);
     if(!vs.length){botSay(`Nothing found for "<span class="hl">${esc(term)}</span>". Try a shorter fragment.`);return;}
     botSay(`Found ${vs.length} vendor${vs.length>1?'s':''} matching "<span class="hl">${esc(term)}</span>":<br>${vs.map(v=>`&#8226; <span class="hl" style="cursor:pointer" onclick="vendorModal(${v.idx})">${esc(v.name)}</span> — ${v.count}× · ${fmt0(v.total)} lifetime · ${isRecurring(v)?'&#8635; recurring':'one-off'}`).join('<br>')}`);return;}
-  // fallback: try vendor match
+  // fallback: try vendor match, then AI
   const v=findVendor(q);
-  if(v){vendorModal(v.idx);botSay(`Opened <span class="hl">${esc(v.name)}</span> — ${v.count} charges, ${fmt0(v.total)} lifetime.`);return;}
-  botSay(`Not sure what you mean. Type <span class="hl">help</span> to see what I can do.`);
+  if(v&&q.split(' ').length<=3){vendorModal(v.idx);botSay(`Opened <span class="hl">${esc(v.name)}</span> — ${v.count} charges, ${fmt0(v.total)} lifetime.`);return;}
+  if(DSKEY()){aiAsk(raw);return;}
+  botSay(`Not sure what you mean. Type <span class="hl">help</span>, or say <span class="hl">set deepseek key sk-…</span> to enable AI answers.`);
 }
 function yearReport(y){
   const mo=MONTHS.filter(m=>m.startsWith(y));
@@ -1067,6 +1118,78 @@ function findVendor(term){
   term=term.trim().toLowerCase();if(!term)return null;
   return V.find(v=>v.name.toLowerCase()===term)||V.find(v=>v.norm===term)||
     V.filter(v=>v.name.toLowerCase().includes(term)).sort((a,b)=>b.count-a.count)[0]||null;
+}
+
+// ═════════════ DEEPSEEK AI ═════════════
+// Runs client-side from your PC. Grounded: we send compact aggregates we
+// computed deterministically (never raw statements), the model interprets.
+function aiDigest(){
+  const mo=MONTHS.slice(-13);
+  const monthly=mo.map(m=>({m,in:Math.round(MSER[m].inc),out:Math.round(MSER[m].exp),xfer:Math.round(MSER[m].xfer)}));
+  const last3=MONTHS.slice(-4,-1), prior3=MONTHS.slice(-7,-4);
+  const sumIn=(v,ms)=>{let t=0;(VTX[v.idx]||[]).forEach(i=>{const x=TX[i];if(x.t==='e'&&ms.includes(x.d.slice(0,7)))t+=x.a;});return Math.round(t)};
+  const vend=V.filter(v=>v.type==='e'&&v.total>300).map(v=>({
+    n:v.name,g:v.group,cnt:v.count,life:Math.round(v.total),typ:Math.round(typical(v)),
+    lastPay:Math.round(lastAmt(v)),l3:sumIn(v,last3),p3:sumIn(v,prior3),
+    sub:isRecurring(v),own:ownerOf(v)||'?'
+  })).sort((a,b)=>b.l3-a.l3).slice(0,60);
+  const red=MONTHS.slice(-12).filter(m=>MSER[m].inc-MSER[m].exp<0);
+  return {currency:'EUR',today:CURM,monthly,redMonths:red,vendors:vend,
+    lifetimeDealsUSD:Math.round(sum(RAW.appsumo||[],x=>x[2]))};
+}
+async function aiCall(messages,model){
+  const r=await fetch('https://api.deepseek.com/chat/completions',{
+    method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+DSKEY()},
+    body:JSON.stringify({model:model||'deepseek-chat',messages,max_tokens:1200,temperature:0.2})});
+  if(r.status===401)throw new Error('KEY');
+  if(!r.ok)throw new Error('HTTP '+r.status);
+  const j=await r.json();
+  return (j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content)||'';
+}
+function mdLite(t){
+  return esc(t).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/^### (.+)$/gm,'<b>$1</b>')
+    .replace(/^## (.+)$/gm,'<b>$1</b>').replace(/^# (.+)$/gm,'<b>$1</b>')
+    .replace(/^[-*] /gm,'&#8226; ').replace(/\n/g,'<br>');
+}
+const AI_SYS='You are the finance copilot inside Wealthview, a personal spend-control app for Sean (Ireland, EUR). '+
+'You receive DETERMINISTIC aggregates computed by the app: 13 months of cash flow (in/out/transfers, transfers already excluded from out), '+
+'top vendors with lifetime, typical monthly (median of active months), last payment, last-3-months (l3) vs prior-3-months (p3) spend, '+
+'sub=detected subscription, own=heaventree|personal|?. Goal: stop cash bleed. Be surgical and specific: name vendors, use EUR amounts from the data, '+
+'quantify savings, never invent numbers not derivable from the data. Short punchy sections, no fluff.';
+async function aiAsk(question){
+  if(!DSKEY()){botSay('No DeepSeek key set. Say: <span class="hl">set deepseek key sk-…</span>');return;}
+  const log=document.getElementById('a-log');
+  const w=document.createElement('div');w.className='msg bot';w.innerHTML='<span style="color:var(--violet)">&#129504;</span> thinking…';log.appendChild(w);log.scrollTop=log.scrollHeight;
+  try{
+    const out=await aiCall([{role:'system',content:AI_SYS},
+      {role:'user',content:'DATA:\n'+JSON.stringify(aiDigest())+'\n\nQUESTION: '+question}]);
+    w.innerHTML=mdLite(out);
+  }catch(e){
+    w.innerHTML=e.message==='KEY'
+      ?'&#9888; DeepSeek rejected the key. Update it with <span class="hl">set deepseek key sk-…</span>'
+      :`&#9888; Couldn't reach DeepSeek (${esc(e.message)}). This works when the app runs from your own PC (saved HTML file); the claude.ai artifact viewer blocks outside calls.`;
+  }
+  log.scrollTop=log.scrollHeight;
+}
+async function aiAnomalies(){
+  nav('asst');
+  addMsg('Run an anomaly scan on my spending','user');
+  if(!DSKEY()){botSay('No DeepSeek key set. Say: <span class="hl">set deepseek key sk-…</span>');return;}
+  const log=document.getElementById('a-log');
+  const w=document.createElement('div');w.className='msg bot';w.innerHTML='<span style="color:var(--violet)">&#129504;</span> deep scan running (reasoning model)…';log.appendChild(w);log.scrollTop=log.scrollHeight;
+  try{
+    const out=await aiCall([{role:'system',content:AI_SYS},
+      {role:'user',content:'DATA:\n'+JSON.stringify(aiDigest())+
+      '\n\nTASK: Forensic anomaly scan. Find: 1) price creep (l3 vs p3 or vs typ), 2) duplicate/overlapping services, '+
+      '3) zombie subscriptions (sub=true but low value), 4) unusual spikes, 5) the 5 most surgical cuts with EUR/month saved. '+
+      'Rank by monthly savings. Be blunt.'}],'deepseek-reasoner');
+    w.innerHTML=mdLite(out);
+  }catch(e){
+    w.innerHTML=e.message==='KEY'
+      ?'&#9888; DeepSeek rejected the key.'
+      :`&#9888; Couldn't reach DeepSeek (${esc(e.message)}). Run the saved HTML from your PC — the artifact viewer blocks outside calls.`;
+  }
+  log.scrollTop=log.scrollHeight;
 }
 
 // ═════════════ WALLET MCP SYNC ═════════════
@@ -1113,14 +1236,14 @@ nav('dashboard');
 </body>
 </html>'''
 
-html = TEMPLATE.replace('__DATA__', data_json).replace('__BFKEY__', BFKEY)
+html = TEMPLATE.replace('__DATA__', data_json).replace('__BFKEY__', BFKEY).replace('__DSKEY__', DSKEY)
 out = '/tmp/claude-0/-home-user-subbs/b079a466-7434-53d3-8f62-638a5f604b40/scratchpad/wealthview.html'
 with open(out, 'w') as f:
     f.write(html)
 print(f"Written {len(html)//1024}KB -> {out}")
 
 # Repo-safe copy (no API key)
-html_repo = TEMPLATE.replace('__DATA__', data_json).replace('__BFKEY__', '')
+html_repo = TEMPLATE.replace('__DATA__', data_json).replace('__BFKEY__', '').replace('__DSKEY__', '')
 with open('/tmp/claude-0/-home-user-subbs/b079a466-7434-53d3-8f62-638a5f604b40/scratchpad/wealthview-repo.html', 'w') as f:
     f.write(html_repo)
 print("Repo-safe copy written (no Brandfetch key)")
