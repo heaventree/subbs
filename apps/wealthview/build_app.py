@@ -211,6 +211,7 @@ select.form-in{cursor:pointer}
       <div class="nav-item" data-v="running" onclick="nav('running')"><span class="ni">&#9201;</span>Running Costs</div>
       <div class="nav-sec">Money</div>
       <div class="nav-item" data-v="subs" onclick="nav('subs')"><span class="ni">&#8635;</span>Subscriptions</div>
+      <div class="nav-item" data-v="vendors" onclick="nav('vendors')"><span class="ni">&#127970;</span>Vendors</div>
       <div class="nav-item" data-v="tx" onclick="nav('tx')"><span class="ni">&#9776;</span>Transactions</div>
       <div class="nav-item" data-v="cats" onclick="nav('cats')"><span class="ni">&#9635;</span>Categories</div>
       <div class="nav-item" data-v="ltd" onclick="nav('ltd')"><span class="ni">&#9889;</span>Lifetime Deals</div>
@@ -231,6 +232,7 @@ select.form-in{cursor:pointer}
       <div class="view" id="view-cashflow"></div>
       <div class="view" id="view-running"></div>
       <div class="view" id="view-subs"></div>
+      <div class="view" id="view-vendors"></div>
       <div class="view" id="view-tx"></div>
       <div class="view" id="view-cats"></div>
       <div class="view" id="view-ltd"></div>
@@ -250,15 +252,51 @@ const DSKEY=()=>localStorage.getItem('wv_dskey')||'__DSKEY__';
 const LOGOC={};
 
 // Expand compact tx: [date, vendorIdx, amount, catIdx, type, recurring]
-const V=RAW.vendors, CATS=RAW.cats, GROUPS=RAW.groups;
+const V=RAW.vendors, CATS=RAW.cats, GROUPS=RAW.groups, RAWS=RAW.raws||[];
 const GC={}; GROUPS.forEach(g=>GC[g.name]=g.color);
-const TX=RAW.tx.map(t=>({d:t[0],v:t[1],a:t[2],c:t[3],t:t[4],r:t[5]===1,
-  get vendor(){return V[this.v]},get cat(){return CATS[this.c]}}));
-V.forEach((v,i)=>{v.idx=i;v.color=GC[v.group]||'#6B7280';
-  v.abbrev=v.name.replace(/[^A-Za-z0-9 ]/g,'').split(' ').filter(Boolean).slice(0,2).map(w=>w[0]).join('').toUpperCase()||'?';});
+const TX=RAW.tx.map(t=>({d:t[0],v:t[1],a:t[2],c:t[3],t:t[4],r:t[5]===1,w:t[6],ve:t[1],
+  get vendor(){return V[this.ve]},get cat(){return CATS[this.c]}}));
+V.forEach((v,i)=>{v.idx=i;v.color=GC[v.group]||'#6B7280';});
 
-// Vendor tx index
-const VTX={}; TX.forEach((t,i)=>{(VTX[t.v]=VTX[t.v]||[]).push(i);});
+// Vendor tx index — rebuilt whenever renames/merges change
+const VTX={};
+const VBYID={}; V.forEach((v,i)=>VBYID[v.id]=i);
+function resolveIdx(i){
+  let guard=0;
+  while(guard++<10){
+    const tgt=S2.merges[V[i].id];
+    if(!tgt||VBYID[tgt]===undefined||VBYID[tgt]===i)break;
+    i=VBYID[tgt];
+  }
+  return i;
+}
+function rebuild(){
+  V.forEach(v=>{
+    if(v.origName===undefined)v.origName=v.name;
+    v.name=S2.names[v.id]||v.origName;
+    v.abbrev=v.name.replace(/[^A-Za-z0-9 ]/g,'').split(' ').filter(Boolean).slice(0,2).map(w=>w[0]).join('').toUpperCase()||'?';
+    v.absorbed=!!S2.merges[v.id];
+  });
+  Object.keys(VTX).forEach(k=>delete VTX[k]);
+  TX.forEach((t,i)=>{t.ve=resolveIdx(t.v);(VTX[t.ve]=VTX[t.ve]||[]).push(i);});
+  V.forEach(v=>{
+    const ids=VTX[v.idx]||[];
+    if(v.absorbed){v.count=0;v.total=0;return;}
+    let total=0,count=0,first='',last='',recurCt=0;const months=new Set();let hasI=false,hasX=false,hasE=false;
+    ids.forEach(ix=>{const t=TX[ix];count++;total+=t.a;months.add(t.d.slice(0,7));
+      if(!first||t.d<first)first=t.d;if(!last||t.d>last)last=t.d;
+      if(t.r)recurCt++;if(t.t==='i')hasI=true;else if(t.t==='x')hasX=true;else hasE=true;});
+    if(count){
+      v.count=count;v.total=Math.round(total*100)/100;v.first=first;v.last=last;
+      v.activeMonths=months.size;
+      const sy=+first.slice(0,4),sm=+first.slice(5,7),ey=+last.slice(0,4),em=+last.slice(5,7);
+      v.spanMonths=(ey-sy)*12+(em-sm)+1;
+      v.avgMonthly=Math.round(total/v.spanMonths*100)/100;
+      v.type=hasI?'i':(hasE?'e':(hasX?'x':v.type));
+      v.recurCt=recurCt;v.recurring=recurCt>0;
+    }
+  });
+}
 
 // Month series (all months in range)
 const MONTHS=[...new Set(TX.map(t=>t.d.slice(0,7)))].sort();
@@ -267,7 +305,12 @@ TX.forEach(t=>{const m=MSER[t.d.slice(0,7)];if(t.t==='i')m.inc+=t.a;else if(t.t=
 const CURM=MONTHS[MONTHS.length-1];
 
 // ═════════════ STATE ═════════════
-const S={view:'dashboard',range:12,
+const S2={
+  names:JSON.parse(localStorage.getItem('wv_names')||'{}'),   // vendorId -> display name
+  merges:JSON.parse(localStorage.getItem('wv_merges')||'{}'), // absorbedId -> primaryId
+};
+function saveS2(){localStorage.setItem('wv_names',JSON.stringify(S2.names));localStorage.setItem('wv_merges',JSON.stringify(S2.merges));}
+const S={view:'dashboard',range:12,vSearch:'',vType:'e',vSort:'total',
   ov:JSON.parse(localStorage.getItem('wv_ov')||'{}'),         // vendor status overrides
   rec:JSON.parse(localStorage.getItem('wv_rec')||'{}'),       // vendor recurring overrides
   rules:JSON.parse(localStorage.getItem('wv_rules')||'[]'),
@@ -373,7 +416,7 @@ function amtSign(t){return t==='i'?'+':t==='x'?'⇄':'-';}
 
 // ═════════════ NAV ═════════════
 const TITLES={dashboard:['Overview','Dashboard'],networth:['Wealth','Net Worth'],cashflow:['Money In / Out','Cash Flow'],
-  running:['Burn Rate','Running Costs'],subs:['Recurring','Subscriptions'],tx:['Ledger','Transactions'],
+  running:['Burn Rate','Running Costs'],subs:['Recurring','Subscriptions'],vendors:['Directory','Vendors'],tx:['Ledger','Transactions'],
   cats:['Breakdown','Categories'],ltd:['AppSumo','Lifetime Deals'],rules:['Automation','Rules Engine'],asst:['AI','Assistant']};
 const RENDER={};
 function nav(v){
@@ -687,6 +730,86 @@ document.addEventListener('click',e=>{if(!e.target.closest('.status-menu'))docum
 function setSt(id,st){S.ov[id]=st;save();RENDER[S.view]();toast('Status &#8594; '+st);}
 function setRec(id,val){S.rec[id]=val;save();RENDER[S.view]();toast(val?'Marked recurring':'Marked not recurring');}
 
+// ═════════════ VENDORS (directory + rename/merge workbench) ═════════════
+RENDER.vendors=function(){
+  const el=document.getElementById('view-vendors');
+  let l=V.filter(v=>!v.absorbed&&v.count>0);
+  if(S.vType!=='all')l=l.filter(v=>v.type===S.vType);
+  if(S.vSearch){const q=S.vSearch.toLowerCase();l=l.filter(v=>v.name.toLowerCase().includes(q)||(v.origName||'').toLowerCase().includes(q));}
+  const key={total:v=>v.total,count:v=>v.count,last:v=>v.last,name:v=>v.name.toLowerCase(),typ:v=>typical(v)};
+  const f=key[S.vSort]||key.total;
+  l.sort((a,b)=>{const x=f(a),y=f(b);return S.vSort==='name'?(x<y?-1:1):(y<x?-1:y>x?1:0);});
+  const mergeCt=Object.keys(S2.merges).length,renameCt=Object.keys(S2.names).length;
+  const rows=l.slice(0,400).map(v=>{
+    const streams=new Set();(VTX[v.idx]||[]).forEach(i=>streams.add(TX[i].w));
+    return `<tr class="rowh">
+<td onclick="vendorModal(${v.idx})"><div style="display:flex;align-items:center;gap:10px">${avHtml(v,30,'vd')}<div style="min-width:0"><div style="font-weight:500;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:230px">${esc(v.name)}${S2.names[v.id]?' <span title="renamed" style="color:var(--accent-h);font-size:10px">&#9998;</span>':''}</div><div style="font-size:10.5px;color:var(--dimmed)">${v.group} · ${streams.size} payment stream${streams.size!==1?'s':''}</div></div></div></td>
+<td>${v.type==='i'?'<span class="badge b-active" style="border-radius:6px">income</span>':v.type==='x'?'<span style="font-size:11px;color:var(--muted)">&#8644; transfer</span>':(isRecurring(v)?'<span class="badge b-cycle">&#8635; sub</span>':'<span style="font-size:11px;color:var(--dimmed)">expense</span>')}</td>
+<td class="mono" style="font-size:12px">${v.count}&times;</td>
+<td class="mono" style="font-size:11.5px;color:var(--muted)">${fmtD(v.last)}</td>
+<td class="mono" style="font-size:12.5px;font-weight:600">${fmt0(v.total)}</td>
+<td class="mono" style="font-size:12px;color:var(--warn)">${v.type==='e'?fmt(typical(v)):'—'}</td>
+<td>${ownerChips(v)}</td>
+<td style="white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();renameModal(${v.idx})" title="Rename">&#9998;</button><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();mergeModal(${v.idx})" title="Merge into another vendor">&#8888;</button></td></tr>`;
+  }).join('');
+  const mergedList=Object.entries(S2.merges).map(([from,to])=>{
+    const fv=V[VBYID[from]],tv=V[VBYID[to]];if(!fv||!tv)return'';
+    return `<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-size:12.5px"><span><span style="color:var(--dimmed)">${esc(fv.origName||fv.name)}</span> &#8594; <b>${esc(tv.name)}</b></span><button class="a-del" onclick="unmerge('${from}')" title="Unmerge">&#10005;</button></div>`;
+  }).join('');
+  el.innerHTML=`
+<div class="filter-bar">
+  <div class="srch" style="flex:1;max-width:300px"><span class="si">&#128269;</span><input placeholder="Search vendors (incl. original names)…" value="${esc(S.vSearch)}" oninput="S.vSearch=this.value;RENDER.vendors()"></div>
+  <div class="seg"><button class="${S.vType==='e'?'active':''}" onclick="S.vType='e';RENDER.vendors()">Expense</button><button class="${S.vType==='i'?'active':''}" onclick="S.vType='i';RENDER.vendors()">Income</button><button class="${S.vType==='x'?'active':''}" onclick="S.vType='x';RENDER.vendors()">Transfers</button><button class="${S.vType==='all'?'active':''}" onclick="S.vType='all';RENDER.vendors()">All</button></div>
+  <select class="flt" onchange="S.vSort=this.value;RENDER.vendors()"><option value="total"${S.vSort==='total'?' selected':''}>Sort: lifetime</option><option value="typ"${S.vSort==='typ'?' selected':''}>Sort: typical/mo</option><option value="count"${S.vSort==='count'?' selected':''}>Sort: charges</option><option value="last"${S.vSort==='last'?' selected':''}>Sort: recent</option><option value="name"${S.vSort==='name'?' selected':''}>Sort: A&#8211;Z</option></select>
+  <span class="res-ct">${l.length} vendors${l.length>400?' (showing 400)':''} · ${renameCt} renamed · ${mergeCt} merged</span>
+</div>
+<table class="tbl"><thead><tr><th>Vendor</th><th>Type</th><th>Charges</th><th>Last</th><th>Lifetime</th><th>Typical/mo</th><th>Owner</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+${mergedList?`<div style="margin-top:22px;max-width:560px"><div class="sec-hdr"><div class="sec-t">Merged vendors (${mergeCt})</div></div><div class="card">${mergedList}</div></div>`:''}`;
+  loadLogos('vd',l.slice(0,400));
+};
+function renameModal(idx){
+  const v=V[idx];
+  openModal(`<div class="modal-hd"><div class="sec-t">Rename vendor</div><button class="modal-x" onclick="closeModal()">&#10005;</button></div>
+<div class="modal-bd">
+  <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Original bank name: <span class="mono">${esc(v.origName||v.name)}</span></div>
+  <div class="form-grp"><div class="form-l">Display name</div><input class="form-in" id="rn-name" value="${esc(v.name)}" onkeydown="if(event.key==='Enter')applyRename(${idx})"></div>
+  <div style="display:flex;gap:8px"><button class="btn btn-primary" onclick="applyRename(${idx})">Save</button>${S2.names[v.id]?`<button class="btn btn-sec" onclick="delete S2.names['${v.id}'];saveS2();rebuild();closeModal();RENDER[S.view]();toast('Reverted to original name')">Revert to original</button>`:''}</div>
+</div>`);
+  setTimeout(()=>{const i=document.getElementById('rn-name');if(i){i.focus();i.select();}},60);
+}
+function applyRename(idx){
+  const v=V[idx];const nm=document.getElementById('rn-name').value.trim();
+  if(!nm){toast('Name required','#F59E0B');return;}
+  if(nm===(v.origName||v.name))delete S2.names[v.id];else S2.names[v.id]=nm;
+  saveS2();rebuild();closeModal();RENDER[S.view]();toast('Renamed');
+}
+function mergeModal(idx){
+  const v=V[idx];
+  openModal(`<div class="modal-hd"><div class="sec-t">Merge "${esc(v.name)}" into…</div><button class="modal-x" onclick="closeModal()">&#10005;</button></div>
+<div class="modal-bd">
+  <div style="font-size:12px;color:var(--muted);margin-bottom:10px">All ${v.count} transactions move under the vendor you pick. Their original bank descriptors stay visible as payment streams. Reversible any time from the Vendors page.</div>
+  <div class="srch" style="margin-bottom:10px"><span class="si">&#128269;</span><input class="form-in" id="mg-q" placeholder="Search target vendor…" oninput="mergeList(${idx})" style="padding-left:32px"></div>
+  <div id="mg-list" style="max-height:44vh;overflow-y:auto"></div>
+</div>`);
+  setTimeout(()=>{document.getElementById('mg-q')?.focus();mergeList(idx);},60);
+}
+function mergeList(idx){
+  const q=(document.getElementById('mg-q')?.value||'').toLowerCase();
+  const src=V[idx];
+  let cands=V.filter(v=>!v.absorbed&&v.idx!==idx&&v.count>0&&(q?v.name.toLowerCase().includes(q):true));
+  cands.sort((a,b)=>b.total-a.total);
+  document.getElementById('mg-list').innerHTML=cands.slice(0,30).map(v=>`<div class="ri" style="cursor:pointer;padding:9px 10px" onclick="doMerge('${src.id}','${v.id}')">${avHtml(v,28,'mg'+v.idx)}<div class="ri-info"><div class="ri-name">${esc(v.name)}</div><div class="ri-cat">${v.group} · ${v.count}&times; · ${fmt0(v.total)}</div></div><span style="color:var(--accent-h);font-size:12px">merge here &#8594;</span></div>`).join('')||'<div style="color:var(--muted);font-size:13px;padding:12px">No matches.</div>';
+}
+function doMerge(fromId,toId){
+  // prevent cycles: if target is (transitively) merged into source, refuse
+  let t=toId,guard=0;
+  while(S2.merges[t]&&guard++<10){t=S2.merges[t];}
+  if(t===fromId){toast('That would create a loop','#F59E0B');return;}
+  S2.merges[fromId]=toId;saveS2();rebuild();closeModal();RENDER[S.view]();
+  toast('Merged — reversible on the Vendors page');
+}
+function unmerge(fromId){delete S2.merges[fromId];saveS2();rebuild();RENDER[S.view]();toast('Unmerged');}
+
 // ═════════════ TRANSACTIONS ═════════════
 function txList(){
   let l=TX;
@@ -717,7 +840,7 @@ RENDER.tx=function(){
   const ti=sum(l.filter(t=>t.t==='i'),t=>t.a),te=sum(l.filter(t=>t.t==='e'),t=>t.a);
   const rows=pg.map(t=>{const v=t.vendor;
     return `<tr class="rowh" onclick="vendorModal(${v.idx})">
-<td><div style="display:flex;align-items:center;gap:9px"><div class="av" style="width:26px;height:26px;border-radius:7px;background:${v.color}1F;color:${v.color};font-size:10px;font-weight:700;flex-shrink:0">${v.abbrev}</div><span style="font-weight:500;font-size:12.5px;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle">${esc(v.name)}</span></div></td>
+<td><div style="display:flex;align-items:center;gap:9px"><div class="av" style="width:26px;height:26px;border-radius:7px;background:${v.color}1F;color:${v.color};font-size:10px;font-weight:700;flex-shrink:0">${v.abbrev}</div><span style="font-weight:500;font-size:12.5px;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle" title="${esc(RAWS[t.w]||'')}">${esc(v.name)}</span></div></td>
 <td style="font-size:11.5px;color:var(--muted)">${esc(t.cat.name)}</td>
 <td class="mono" style="font-size:11.5px;color:var(--muted)">${fmtD(t.d)}</td>
 <td class="mono" style="font-weight:600;font-size:12.5px;color:${amtCol(t.t)}">${amtSign(t.t)}${fmt(Math.abs(t.a))}</td>
@@ -805,7 +928,14 @@ function vendorModal(idx){
   <div class="stat"><div class="l">Lifetime</div><div class="v mono">${fmt0(v.total)}</div></div>
   <div class="stat"><div class="l">Charges</div><div class="v mono">${v.count}&times; / ${v.spanMonths} mo</div></div>
 </div>
-<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px"><span style="font-size:12px;color:var(--muted)">Owner:</span>${ownerChips(v)}<span style="font-size:11px;color:var(--dimmed)">H = Heaventree (business) · P = Personal</span></div>
+<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap"><span style="font-size:12px;color:var(--muted)">Owner:</span>${ownerChips(v)}<span style="font-size:11px;color:var(--dimmed)">H = Heaventree · P = Personal</span><span style="flex:1"></span><button class="btn btn-sm btn-sec" onclick="closeModal();renameModal(${idx})">&#9998; Rename</button><button class="btn btn-sm btn-sec" onclick="closeModal();mergeModal(${idx})">&#8888; Merge</button></div>
+${(function(){
+  const st={};(VTX[idx]||[]).forEach(i=>{const t=TX[i];const k=t.w;if(!st[k])st[k]={n:RAWS[k]||'?',ct:0,tot:0,last:'',lastA:0};const o=st[k];o.ct++;o.tot+=t.a;if(t.d>o.last){o.last=t.d;o.lastA=t.a;}});
+  const list=Object.values(st).sort((a,b)=>b.tot-a.tot);
+  if(list.length<2)return'';
+  return `<div style="font-size:11px;color:var(--dimmed);margin:8px 0 6px">Payment streams (${list.length}) — separate bills from this vendor</div>
+  <div style="display:flex;flex-direction:column;gap:5px;margin-bottom:6px">${list.slice(0,14).map(o=>`<div style="display:flex;align-items:center;gap:10px;background:var(--raised);border:1px solid var(--border);border-radius:8px;padding:7px 11px;font-size:12px"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(o.n)}">${esc(o.n)}</span><span class="mono" style="color:var(--dimmed)">${o.ct}&times;</span><span class="mono" style="color:var(--muted)">last ${fmtD(o.last)}</span><span class="mono" style="font-weight:600;color:var(--expense-t)">${fmt(o.lastA)}</span><span class="mono" style="color:var(--dimmed);min-width:70px;text-align:right">${fmt0(o.tot)} life</span></div>`).join('')}${list.length>14?`<div style="font-size:11px;color:var(--dimmed)">+${list.length-14} more streams</div>`:''}</div>`;
+})()}
 <div style="display:flex;gap:8px;margin-bottom:6px">
   <button class="btn btn-sm ${rec?'btn-sec':'btn-primary'}" onclick="setRec('${v.id}',${!rec});vendorModal(${idx})">${rec?'&#8856; Mark not recurring':'&#8635; Mark as recurring'}</button>
   ${['active','review','cancelled'].map(s=>`<button class="btn btn-sm btn-sec" onclick="setSt('${v.id}','${s}');vendorModal(${idx})">Set ${s}</button>`).join('')}
@@ -1010,11 +1140,25 @@ function answer(q,raw){
 &#8226; <span class="hl">net worth</span> / <span class="hl">add asset House 385000</span> / <span class="hl">add liability Mortgage 210000</span><br>
 &#8226; <span class="hl">mark &lt;vendor&gt; recurring</span> — e.g. "mark brixly recurring"<br>
 &#8226; <span class="hl">assign brennan to personal</span> — Heaventree / Personal split<br>
+&#8226; <span class="hl">rename 13133 zuric to Zurich Mortgage Cover</span><br>
+&#8226; <span class="hl">merge the aa into aa ireland</span> — combine duplicate vendors<br>
 &#8226; <span class="hl">sync wallet</span> — pull latest from BudgetBakers<br>
 &#8226; Anything else goes to <span class="hl">DeepSeek AI</span> (trends, anomalies, advice) when a key is set`);return;}
   // set deepseek key
   let mk=raw.match(/set deepseek key\s+(sk-\S+)/i);
   if(mk){localStorage.setItem('wv_dskey',mk[1]);botSay('DeepSeek key saved — AI answers are now enabled.');return;}
+  // rename vendor
+  mk=raw.match(/rename\s+(.+?)\s+to\s+(.+)/i);
+  if(mk){const v=findVendor(mk[1]);if(!v){botSay(`Couldn't find "${esc(mk[1])}".`);return;}
+    S2.names[v.id]=mk[2].trim();saveS2();rebuild();
+    botSay(`Renamed <span class="mono">${esc(v.origName||'')}</span> &#8594; <span class="hl">${esc(mk[2].trim())}</span>.`);return;}
+  // merge vendors
+  mk=q.match(/merge\s+(.+?)\s+(?:into|with)\s+(.+)/);
+  if(mk){const a=findVendor(mk[1]),b=findVendor(mk[2]);
+    if(!a||!b){botSay(`Couldn't find ${!a?'"'+esc(mk[1])+'"':'"'+esc(mk[2])+'"'}.`);return;}
+    if(a.idx===b.idx){botSay('Same vendor.');return;}
+    doMerge(a.id,b.id);
+    botSay(`Merged <span class="hl">${esc(a.name)}</span> into <span class="hl">${esc(b.name)}</span> — its bills stay visible as payment streams. Undo on the Vendors page.`);return;}
   // assign owner
   mk=q.match(/assign\s+(.+?)\s+to\s+(heaventree|business|personal)/);
   if(mk){const v=findVendor(mk[1]);if(!v){botSay(`Couldn't find "${esc(mk[1])}".`);return;}
@@ -1231,6 +1375,7 @@ function xTx(){const l=txList();dl([['Date','Payee','Category','Group','Amount',
 function xRun(){const l=runList();dl([['Vendor','Group','Charges','First','Last','AvgPerMonth','Lifetime','Recurring','Status']].concat(l.map(v=>[v.name,v.group,v.count,v.first,v.last,v.avgMonthly,v.total,isRecurring(v)?'Y':'N',vStatus(v)])),'wealthview-running-costs.csv');}
 
 // ═════════════ BOOT ═════════════
+rebuild();
 nav('dashboard');
 </script>
 </body>

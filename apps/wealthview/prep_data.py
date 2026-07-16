@@ -112,6 +112,8 @@ def norm_payee(name):
     if re.match(r'^[a-z]{2}\d{2}[a-z0-9]{8,}$', n.replace(' ', '')):
         return 'bank transfer (iban)'
     # Vendor grouping heuristics
+    if '20i' in n: return '20i'
+    if n.startswith('aa ') or n.startswith('the aa') or n.startswith('aa,'): return 'the aa'
     if n.startswith('amzn') or n.startswith('amazon'): return 'amazon'
     if 'paddle.net' in n or n.startswith('paddle'):
         m = re.search(r'paddle\.net\*\s*(\w+)', n)
@@ -136,6 +138,7 @@ DISPLAY = {
     'ptsb mortgage':'PTSB Mortgage','aldi':'Aldi','humm':'Humm Flexi-Fi',
     'electric ireland':'Electric Ireland','thahira banu':'Thahira Banu',
     'revolut transfer':'Revolut Transfer',
+    '20i':'20i (Hosting)','the aa':'The AA',
 }
 
 def display_name(norm, raw):
@@ -241,10 +244,18 @@ for v in vendor_list:
         seen[v['id']] = 0
 vid = {v['norm']: i for i, v in enumerate(vendor_list)}
 
-# ── Compact transactions: [dateStr, vendorIdx, amount, catIdx, type, recurring]
+# ── Compact transactions: [dateStr, vendorIdx, amount, catIdx, type, recurring, rawIdx]
 cats_list = sorted(set(t['c'] for t in txs))
 cidx = {c: i for i, c in enumerate(cats_list)}
-tx_compact = [[t['d'], vid[t['norm']], t['a'], cidx[t['c']], t['t'], 1 if t['r'] else 0]
+raw_names = []
+raw_idx = {}
+def rid(raw):
+    r = clean_payee(raw)[:60]
+    if r not in raw_idx:
+        raw_idx[r] = len(raw_names)
+        raw_names.append(r)
+    return raw_idx[r]
+tx_compact = [[t['d'], vid[t['norm']], t['a'], cidx[t['c']], t['t'], 1 if t['r'] else 0, rid(t['raw'])]
               for t in txs]
 
 # Category meta
@@ -303,6 +314,7 @@ out = {
     'cats': cat_meta,
     'groups': group_meta,
     'tx': tx_compact,
+    'raws': raw_names,
     'appsumo': appsumo,
 }
 
