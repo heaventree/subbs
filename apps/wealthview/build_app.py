@@ -260,8 +260,8 @@ const VTX={}; TX.forEach((t,i)=>{(VTX[t.v]=VTX[t.v]||[]).push(i);});
 
 // Month series (all months in range)
 const MONTHS=[...new Set(TX.map(t=>t.d.slice(0,7)))].sort();
-const MSER={}; MONTHS.forEach(m=>MSER[m]={inc:0,exp:0});
-TX.forEach(t=>{const m=MSER[t.d.slice(0,7)];if(t.t==='i')m.inc+=t.a;else m.exp+=t.a;});
+const MSER={}; MONTHS.forEach(m=>MSER[m]={inc:0,exp:0,xfer:0});
+TX.forEach(t=>{const m=MSER[t.d.slice(0,7)];if(t.t==='i')m.inc+=t.a;else if(t.t==='x')m.xfer+=t.a;else m.exp+=t.a;});
 const CURM=MONTHS[MONTHS.length-1];
 
 // ═════════════ STATE ═════════════
@@ -328,6 +328,9 @@ function loadLogos(prefix,list){
   });},60);
 }
 function sum(arr,f){return arr.reduce((a,x)=>a+f(x),0);}
+// Amount colour + sign by tx type ('i' income, 'x' transfer, 'e' expense)
+function amtCol(t){return t==='i'?'var(--income-t)':t==='x'?'var(--muted)':'var(--expense-t)';}
+function amtSign(t){return t==='i'?'+':t==='x'?'⇄':'-';}
 
 // ═════════════ NAV ═════════════
 const TITLES={dashboard:['Overview','Dashboard'],networth:['Wealth','Net Worth'],cashflow:['Money In / Out','Cash Flow'],
@@ -390,7 +393,7 @@ RENDER.dashboard=function(){
   // Recent
   const rec12=TX.slice(0,11);
   const recH=rec12.map(t=>{const v=t.vendor;
-    return `<div class="asset-row" style="margin-bottom:6px;padding:9px 12px;cursor:pointer" onclick="vendorModal(${v.idx})">${avHtml(v,30,'drx'+Math.random().toString(36).slice(2,6))}<div class="asset-info"><div class="asset-nm" style="font-size:12.5px">${esc(v.name)}</div><div class="asset-ty">${esc(t.cat.name)}</div></div><div style="text-align:right"><div class="mono" style="font-size:12.5px;font-weight:600;color:${t.t==='i'?'var(--income-t)':'var(--expense-t)'}">${t.t==='i'?'+':'-'}${fmt(t.a)}</div><div style="font-size:10.5px;color:var(--dimmed)">${fmtD(t.d)}</div></div></div>`;}).join('');
+    return `<div class="asset-row" style="margin-bottom:6px;padding:9px 12px;cursor:pointer" onclick="vendorModal(${v.idx})">${avHtml(v,30,'drx'+Math.random().toString(36).slice(2,6))}<div class="asset-info"><div class="asset-nm" style="font-size:12.5px">${esc(v.name)}</div><div class="asset-ty">${esc(t.cat.name)}</div></div><div style="text-align:right"><div class="mono" style="font-size:12.5px;font-weight:600;color:${amtCol(t.t)}">${amtSign(t.t)}${fmt(Math.abs(t.a))}</div><div style="font-size:10.5px;color:var(--dimmed)">${fmtD(t.d)}</div></div></div>`;}).join('');
 
   el.innerHTML=`
 <div class="kpi-grid">
@@ -636,7 +639,7 @@ function txList(){
   let l=TX;
   const q=S.tSearch.toLowerCase();
   if(q)l=l.filter(t=>t.vendor.name.toLowerCase().includes(q)||t.cat.name.toLowerCase().includes(q));
-  if(S.tType!=='all')l=l.filter(t=>t.t===(S.tType==='income'?'i':'e'));
+  if(S.tType!=='all')l=l.filter(t=>t.t===(S.tType==='income'?'i':S.tType==='transfer'?'x':'e'));
   if(S.tGroup)l=l.filter(t=>t.cat.group===S.tGroup);
   if(S.tCat)l=l.filter(t=>t.cat.name===S.tCat);
   if(S.tYear)l=l.filter(t=>t.d.startsWith(S.tYear));
@@ -663,14 +666,14 @@ RENDER.tx=function(){
 <td><div style="display:flex;align-items:center;gap:9px"><div class="av" style="width:26px;height:26px;border-radius:7px;background:${v.color}1F;color:${v.color};font-size:10px;font-weight:700;flex-shrink:0">${v.abbrev}</div><span style="font-weight:500;font-size:12.5px;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle">${esc(v.name)}</span></div></td>
 <td style="font-size:11.5px;color:var(--muted)">${esc(t.cat.name)}</td>
 <td class="mono" style="font-size:11.5px;color:var(--muted)">${fmtD(t.d)}</td>
-<td class="mono" style="font-weight:600;font-size:12.5px;color:${t.t==='i'?'var(--income-t)':'var(--expense-t)'}">${t.t==='i'?'+':'-'}${fmt(t.a)}</td>
+<td class="mono" style="font-weight:600;font-size:12.5px;color:${amtCol(t.t)}">${amtSign(t.t)}${fmt(Math.abs(t.a))}</td>
 <td>${t.r?'<span style="font-size:11px;color:var(--accent-h)" title="recurring">&#8635;</span>':''}</td></tr>`;
   }).join('');
   const pag=pc>1?`<div class="pgn"><button class="pg-b" onclick="tp(${S.tPage-1})" ${S.tPage<=1?'disabled':''}>&#171;</button>${pgBtns(S.tPage,pc)}<button class="pg-b" onclick="tp(${S.tPage+1})" ${S.tPage>=pc?'disabled':''}>&#187;</button></div>`:'';
   el.innerHTML=`
 <div class="filter-bar">
   <div class="srch" style="flex:1;max-width:280px"><span class="si">&#128269;</span><input placeholder="Search payee or category…" value="${esc(S.tSearch)}" oninput="S.tSearch=this.value;S.tPage=1;RENDER.tx()"></div>
-  <div class="seg"><button class="${S.tType==='all'?'active':''}" onclick="S.tType='all';S.tPage=1;RENDER.tx()">All</button><button class="${S.tType==='expense'?'active':''}" onclick="S.tType='expense';S.tPage=1;RENDER.tx()">Out</button><button class="${S.tType==='income'?'active':''}" onclick="S.tType='income';S.tPage=1;RENDER.tx()">In</button></div>
+  <div class="seg"><button class="${S.tType==='all'?'active':''}" onclick="S.tType='all';S.tPage=1;RENDER.tx()">All</button><button class="${S.tType==='expense'?'active':''}" onclick="S.tType='expense';S.tPage=1;RENDER.tx()">Out</button><button class="${S.tType==='income'?'active':''}" onclick="S.tType='income';S.tPage=1;RENDER.tx()">In</button><button class="${S.tType==='transfer'?'active':''}" onclick="S.tType='transfer';S.tPage=1;RENDER.tx()">Transfers</button></div>
   <select class="flt" onchange="S.tGroup=this.value;S.tCat='';S.tPage=1;RENDER.tx()"><option value="">All groups</option>${groups.map(g=>`<option ${S.tGroup===g?'selected':''}>${g}</option>`).join('')}</select>
   <select class="flt" onchange="S.tCat=this.value;S.tPage=1;RENDER.tx()"><option value="">All categories</option>${[...new Set(catsIn.map(c=>c.name))].sort().map(c=>`<option ${S.tCat===c?'selected':''}>${c}</option>`).join('')}</select>
   <select class="flt" onchange="S.tYear=this.value;S.tPage=1;RENDER.tx()"><option value="">All years</option>${years.map(y=>`<option ${S.tYear===y?'selected':''}>${y}</option>`).join('')}</select>
@@ -733,7 +736,7 @@ function vendorModal(idx){
   txs.forEach(t=>{const m=t.d.slice(0,7);if(per[m]!==undefined&&t.t==='e')per[m]+=t.a;});
   const mxm=Math.max(...Object.values(per),1);
   const spark=mo.map(m=>`<div class="sb" style="height:${Math.max(2,per[m]/mxm*54)}px" title="${fmtM(m)}: ${fmt(per[m])}"></div>`).join('');
-  const rows=txs.slice(0,250).map(t=>`<tr><td class="mono" style="font-size:11.5px;color:var(--muted)">${fmtD(t.d)}</td><td style="font-size:12px;color:var(--muted)">${esc(t.cat.name)}</td><td class="mono" style="font-weight:600;font-size:12.5px;color:${t.t==='i'?'var(--income-t)':'var(--expense-t)'}">${t.t==='i'?'+':'-'}${fmt(t.a)}</td><td>${t.r?'<span style="color:var(--accent-h);font-size:11px">&#8635;</span>':''}</td></tr>`).join('');
+  const rows=txs.slice(0,250).map(t=>`<tr><td class="mono" style="font-size:11.5px;color:var(--muted)">${fmtD(t.d)}</td><td style="font-size:12px;color:var(--muted)">${esc(t.cat.name)}</td><td class="mono" style="font-weight:600;font-size:12.5px;color:${amtCol(t.t)}">${amtSign(t.t)}${fmt(Math.abs(t.a))}</td><td>${t.r?'<span style="color:var(--accent-h);font-size:11px">&#8635;</span>':''}</td></tr>`).join('');
   const rec=isRecurring(v);const st=vStatus(v);
   openModal(`<div class="modal-hd">${avHtml(v,44,'mv')}
 <div style="min-width:0"><div style="font-size:17px;font-weight:700">${esc(v.name)}</div><div style="font-size:12px;color:var(--muted)">${v.group} · ${esc(v.category)}</div></div>

@@ -45,6 +45,7 @@ GROUP_COLORS = {
     'Groceries & Food': '#F59E0B', 'Home & Utilities': '#06B6D4', 'Transport': '#3B82F6',
     'Amazon': '#F97316', 'Insurance & Loans': '#EF4444', 'Health': '#14B8A6',
     'Pets': '#A78BFA', 'Leisure': '#E879F9', 'Education': '#818CF8', 'Other': '#6B7280',
+    'Transfers & Savings': '#475569',
 }
 
 DOMAIN_MAP = {
@@ -147,6 +148,25 @@ def find_domain(norm):
     return None
 
 # ── Parse ────────────────────────────────────────────────────────────────────
+# ── Internal-transfer detection ──────────────────────────────────────────────
+# Money moved between your own accounts / into savings / crypto conversions is
+# NOT consumption — it inflates spend if counted. Tag as type 'x' (transfer) so
+# it is excluded from burn, running costs and expense totals.
+TRANSFER_NAME = re.compile(
+    r'exchanged to|savings vault|transferwise|money transfer|withdrawal|'
+    r'^wise( -|$)|wise - personal|revolut transfer|bank transfer|top-?up|'
+    r'transfer to|transfer from|own account|to savings|xau|to btc', re.I)
+TRANSFER_CATS = {'savings', 'financial investments'}  # moved to your own reserves
+
+def classify(norm, raw, cat, base_type):
+    if base_type == 'i':
+        return 'i'
+    if cat.lower() in TRANSFER_CATS:
+        return 'x'
+    if TRANSFER_NAME.search(norm) or TRANSFER_NAME.search(raw):
+        return 'x'
+    return 'e'
+
 rows = list(csv.DictReader(open(CSV)))
 txs = []
 for r in rows:
@@ -154,11 +174,14 @@ for r in rows:
     except: continue
     date = r['payment_date']
     if not date: continue
-    typ = 'i' if r['item_type'] == 'revenue' else 'e'
+    base = 'i' if r['item_type'] == 'revenue' else 'e'
     cat = r['category'] or 'Other'
-    grp = CAT2GROUP.get(cat.lower(), 'Income' if typ == 'i' else 'Other')
+    grp = CAT2GROUP.get(cat.lower(), 'Income' if base == 'i' else 'Other')
     raw = r['name']
     norm = norm_payee(raw)
+    typ = classify(norm, raw, cat, base)
+    if typ == 'x':
+        grp = 'Transfers & Savings'
     txs.append({'d': date, 'raw': raw, 'norm': norm, 'a': round(amt, 2), 't': typ,
                 'c': cat, 'g': grp, 'r': r['is_recurring'] == 'true'})
 
@@ -182,7 +205,9 @@ for t in txs:
     v['grps'][t['g']] += t['a']
     v['cats'][t['c']] += t['a']
     v['months'].add(t['d'][:7])
+    # Vendor type precedence: income > transfer > expense
     if t['t'] == 'i': v['type'] = 'i'
+    elif t['t'] == 'x' and v['type'] != 'i': v['type'] = 'x'
 
 def months_between(a, b):
     ay, am = int(a[:4]), int(a[5:7]); by, bm = int(b[:4]), int(b[5:7])
