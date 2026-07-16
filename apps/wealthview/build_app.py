@@ -125,7 +125,7 @@ input.flt-n:focus{border-color:var(--accent)}
 .pg-b:hover,.pg-b.active{background:var(--accent);border-color:var(--accent);color:#fff}
 .pg-b:disabled{opacity:.3;cursor:default}
 /* subs cards */
-.cards-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.cards-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px}
 .sub-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;transition:.15s}
 .sub-card:hover{border-color:rgba(99,102,241,.5)}
 .status-menu{position:relative}
@@ -195,7 +195,7 @@ select.form-in{cursor:pointer}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 ::-webkit-scrollbar-thumb:hover{background:var(--dimmed)}
-@media(max-width:920px){#sidebar{display:none}.kpi-grid{grid-template-columns:repeat(2,1fr)}.chart-row,.nw-grid{grid-template-columns:1fr}.cards-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:920px){#sidebar{display:none}.kpi-grid{grid-template-columns:repeat(2,1fr)}.chart-row,.nw-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -272,7 +272,7 @@ const S={view:'dashboard',range:12,
   assets:JSON.parse(localStorage.getItem('wv_assets')||'[]'),
   nwHist:JSON.parse(localStorage.getItem('wv_nwhist')||'[]'),
   rSearch:'',rGroup:'',rMin:3,rSort:'avg',rDir:-1,
-  sSearch:'',sGroup:'',sStatus:'',
+  sSearch:'',sGroup:'',sStatus:'',sSort:'cost',
   tSearch:'',tType:'all',tGroup:'',tCat:'',tYear:'',tMin:'',tMax:'',tRec:'',tPage:1,tSort:'d',tDir:-1,
   cfYear:'',
 };
@@ -286,7 +286,21 @@ const fmtM=m=>{const d=new Date(m+'-15');return d.toLocaleDateString('en-IE',{mo
 const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
 function toast(m,c){const e=document.getElementById('toast');e.innerHTML=`<span style="color:${c||'#34D399'}">&#9679;</span> ${m}`;e.classList.add('show');clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove('show'),2600);}
 
-function isRecurring(v){ if(S.rec[v.id]!==undefined)return S.rec[v.id]; return v.recurring; }
+// A subscription = a regular recurring OUTGOING, not just anything the bank
+// flagged. Definition: an expense vendor charged in >=3 distinct months AND
+// present in >=40% of the months since its first charge (steady cadence).
+// Manual/rule overrides in S.rec always win, so you keep full control.
+function detectSub(v){
+  if(v.type!=='e') return false;
+  if(v.activeMonths<3) return false;
+  if(!(v.avgMonthly>0)) return false;
+  const coverage = v.activeMonths/Math.max(v.spanMonths,1);   // present most months
+  const perMonth = v.count/v.activeMonths;                    // ~1 charge/month = a bill
+  // A subscription bills roughly monthly. Groceries / Amazon fire many times a
+  // month (high perMonth) — exclude them. "Monthly outgoing", per your rule.
+  return coverage>=0.4 && perMonth<=1.6;
+}
+function isRecurring(v){ if(S.rec[v.id]!==undefined)return S.rec[v.id]; return detectSub(v); }
 function vStatus(v){
   if(S.ov[v.id])return S.ov[v.id];
   const days=(new Date(CURM+'-28')-new Date(v.last))/864e5;
@@ -581,7 +595,9 @@ function subsList(){
   if(S.sSearch){const q=S.sSearch.toLowerCase();l=l.filter(v=>v.name.toLowerCase().includes(q));}
   if(S.sGroup)l=l.filter(v=>v.group===S.sGroup);
   if(S.sStatus)l=l.filter(v=>vStatus(v)===S.sStatus);
-  l.sort((a,b)=>typical(b)-typical(a));
+  if(S.sSort==='name')l.sort((a,b)=>a.name.localeCompare(b.name));
+  else if(S.sSort==='last')l.sort((a,b)=>b.last<a.last?-1:b.last>a.last?1:0);
+  else l.sort((a,b)=>typical(b)-typical(a));
   return l;
 }
 RENDER.subs=function(){
@@ -620,13 +636,18 @@ RENDER.subs=function(){
   <div class="kpi"><div class="kpi-l">Recurring vendors</div><div class="kpi-v mono">${all.length}</div><div class="kpi-s">${act.length} currently active</div></div>
   <div class="kpi"><div class="kpi-l">Need review</div><div class="kpi-v mono" style="color:var(--warn)">${all.filter(v=>vStatus(v)==='review').length}</div><div class="kpi-s">not charged in 50–100 days</div></div>
 </div>
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;font-size:12px;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 13px">
+  <span style="color:var(--accent-h)">&#8635;</span>
+  <span>Showing regular monthly outgoings — expense vendors charged in 3+ months with steady cadence. Something wrong? Change any card's status, or set a <span style="color:var(--accent-h);cursor:pointer" onclick="nav('rules')">rule</span> to control what counts.</span>
+</div>
 <div class="filter-bar">
   <div class="srch"><span class="si">&#128269;</span><input placeholder="Search…" value="${esc(S.sSearch)}" oninput="S.sSearch=this.value;RENDER.subs()"></div>
   <select class="flt" onchange="S.sGroup=this.value;RENDER.subs()"><option value="">All groups</option>${groups.map(g=>`<option ${S.sGroup===g?'selected':''}>${g}</option>`).join('')}</select>
   <select class="flt" onchange="S.sStatus=this.value;RENDER.subs()"><option value="">All statuses</option>${['active','review','paused','cancelled','lapsed'].map(s=>`<option ${S.sStatus===s?'selected':''}>${s}</option>`).join('')}</select>
-  <span class="res-ct">${l.length} of ${all.length}</span>
+  <select class="flt" onchange="S.sSort=this.value;RENDER.subs()"><option value="cost"${S.sSort==='cost'?' selected':''}>Sort: cost/mo</option><option value="name"${S.sSort==='name'?' selected':''}>Sort: name</option><option value="last"${S.sSort==='last'?' selected':''}>Sort: last charge</option></select>
+  <span class="res-ct">${l.length} subscriptions</span>
 </div>
-<div class="cards-grid">${cards||'<div class="empty" style="grid-column:span 3"><div class="empty-ic">&#128269;</div><div>Nothing matches</div></div>'}</div>`;
+<div class="cards-grid">${cards||'<div class="empty" style="grid-column:1/-1"><div class="empty-ic">&#128269;</div><div>Nothing matches</div></div>'}</div>`;
   loadLogos('sv',l.slice(0,120));
 };
 function togSM(id){const dd=document.getElementById('sm_'+id);if(!dd)return;const o=dd.style.display!=='none';document.querySelectorAll('.status-dd').forEach(d=>d.style.display='none');if(!o)dd.style.display='block';}

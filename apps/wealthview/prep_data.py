@@ -254,15 +254,44 @@ cat_meta = [{'name': c, 'group': CAT2GROUP.get(c.lower(), 'Other'),
 
 group_meta = [{'name': g, 'color': c} for g, c in GROUP_COLORS.items()]
 
-# ── AppSumo lifetime deals (Subly export) ────────────────────────────────────
-APPSUMO_CSV = '/root/.claude/uploads/b079a466-7434-53d3-8f62-638a5f604b40/b7248c0f-subly_transactions_20100101_20260716.csv'
+# ── AppSumo lifetime deals (Subly export, 16 Jul 2026) ───────────────────────
+# Two sections in one file:
+#   1. Structured redemption rows (2020-2026): name / initialPaymentDate / cost
+#   2. Invoice history tail (2019-2020): actual amounts charged, incl. refunds.
+# Combined they give the true spend (~$15.8k) vs the old inflated $30k dump.
+APPSUMO_CSV = '/root/.claude/uploads/b079a466-7434-53d3-8f62-638a5f604b40/d5b05921-subly_export_16_07_202622222.csv'
 appsumo = []
 try:
-    for r in csv.DictReader(open(APPSUMO_CSV)):
-        if r['data_source'] != 'appsumo': continue
-        d, m, y = r['date'].split('/')
-        iso = f'{y}-{m}-{d}'
-        appsumo.append([iso, r['name'], round(float(r['amount'] or 0), 2)])
+    raw_lines = open(APPSUMO_CSV, encoding='utf-8', errors='replace').read().splitlines()
+
+    # Section 1 — structured redemptions
+    for r in csv.DictReader(raw_lines):
+        if r.get('data_source') != 'appsumo':
+            continue
+        ipd = r.get('initialPaymentDate') or ''
+        if '/' not in ipd:
+            continue
+        d, m, y = ipd.split('/')
+        try: cost = round(float(r.get('cost') or 0), 2)
+        except ValueError: continue
+        appsumo.append([f'{y}-{m}-{d}', r['name'], cost])
+
+    # Section 2 — invoice history (messy tail); each invoice = one real payment
+    inv_hdr = re.compile(
+        r'(\d{2})\.(\d{2})\.(\d{4})Invoice ID:\W*[0-9a-f-]+(PAID|HAS REFUND)'
+        r'\$([\d.]+)\s*USD(.*)')
+    for ln in raw_lines:
+        m = inv_hdr.search(ln)
+        if not m:
+            continue
+        mm, dd, yy, status, amt, rest = m.groups()
+        refunded = status == 'HAS REFUND' or 'REFUND' in rest.upper()
+        if refunded:
+            continue  # net spend excludes refunds
+        prod = re.sub(r'\W*-\s*(PAID|REFUNDED).*$', '', rest).strip().lstrip('�').strip()
+        prod = prod or 'AppSumo purchase'
+        appsumo.append([f'{yy}-{mm}-{dd}', prod, round(float(amt), 2)])
+
     appsumo.sort(key=lambda x: x[0], reverse=True)
 except FileNotFoundError:
     pass
