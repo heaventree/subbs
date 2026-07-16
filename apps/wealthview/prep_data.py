@@ -88,6 +88,8 @@ def clean_payee(name):
     return n or name
 
 CHAINS = [
+    ('ie81ipbs','ptsb mortgage'),        # bare mortgage IBAN payments
+    ('ie43revo','revolut transfer'),
     ('aldi','aldi'),('lidl','lidl'),('tesco','tesco'),('dunnes','dunnes stores'),
     ('supervalu','supervalu'),('circle k','circle k'),('applegreen','applegreen'),
     ('ptsb','ptsb mortgage'),('pstb','ptsb mortgage'),('humm','humm'),
@@ -104,10 +106,10 @@ CHAINS = [
 
 def norm_payee(name):
     n = IBAN_RE.sub('', name.lower()).strip()
-    if re.match(r'^[a-z]{2}\d{2}[a-z0-9]{8,}$', n.replace(' ', '')):
-        return 'bank transfer (iban)'
     for pre, canon in CHAINS:
         if n.startswith(pre): return canon
+    if re.match(r'^[a-z]{2}\d{2}[a-z0-9]{8,}$', n.replace(' ', '')):
+        return 'bank transfer (iban)'
     # Vendor grouping heuristics
     if n.startswith('amzn') or n.startswith('amazon'): return 'amazon'
     if 'paddle.net' in n or n.startswith('paddle'):
@@ -132,6 +134,7 @@ DISPLAY = {
     'google':'Google','temu':'Temu','bank transfer (iban)':'Bank Transfer (IBAN)',
     'ptsb mortgage':'PTSB Mortgage','aldi':'Aldi','humm':'Humm Flexi-Fi',
     'electric ireland':'Electric Ireland','thahira banu':'Thahira Banu',
+    'revolut transfer':'Revolut Transfer',
 }
 
 def display_name(norm, raw):
@@ -226,6 +229,19 @@ cat_meta = [{'name': c, 'group': CAT2GROUP.get(c.lower(), 'Other'),
 
 group_meta = [{'name': g, 'color': c} for g, c in GROUP_COLORS.items()]
 
+# ── AppSumo lifetime deals (Subly export) ────────────────────────────────────
+APPSUMO_CSV = '/root/.claude/uploads/b079a466-7434-53d3-8f62-638a5f604b40/b7248c0f-subly_transactions_20100101_20260716.csv'
+appsumo = []
+try:
+    for r in csv.DictReader(open(APPSUMO_CSV)):
+        if r['data_source'] != 'appsumo': continue
+        d, m, y = r['date'].split('/')
+        iso = f'{y}-{m}-{d}'
+        appsumo.append([iso, r['name'], round(float(r['amount'] or 0), 2)])
+    appsumo.sort(key=lambda x: x[0], reverse=True)
+except FileNotFoundError:
+    pass
+
 out = {
     'meta': {'generated': '2026-07-16', 'source': 'BudgetBakers export (Jun 2023 – Jul 2026)',
              'txCount': len(tx_compact), 'vendorCount': len(vendor_list)},
@@ -233,6 +249,7 @@ out = {
     'cats': cat_meta,
     'groups': group_meta,
     'tx': tx_compact,
+    'appsumo': appsumo,
 }
 
 with open('/tmp/spendly2_data.json', 'w') as f:

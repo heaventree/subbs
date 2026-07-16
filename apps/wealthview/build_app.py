@@ -212,6 +212,7 @@ select.form-in{cursor:pointer}
       <div class="nav-item" data-v="subs" onclick="nav('subs')"><span class="ni">&#8635;</span>Subscriptions</div>
       <div class="nav-item" data-v="tx" onclick="nav('tx')"><span class="ni">&#9776;</span>Transactions</div>
       <div class="nav-item" data-v="cats" onclick="nav('cats')"><span class="ni">&#9635;</span>Categories</div>
+      <div class="nav-item" data-v="ltd" onclick="nav('ltd')"><span class="ni">&#9889;</span>Lifetime Deals</div>
       <div class="nav-sec">Tools</div>
       <div class="nav-item" data-v="rules" onclick="nav('rules')"><span class="ni">&#9881;</span>Rules Engine</div>
       <div class="nav-item" data-v="asst" onclick="nav('asst')"><span class="ni">&#10022;</span>Assistant</div>
@@ -231,6 +232,7 @@ select.form-in{cursor:pointer}
       <div class="view" id="view-subs"></div>
       <div class="view" id="view-tx"></div>
       <div class="view" id="view-cats"></div>
+      <div class="view" id="view-ltd"></div>
       <div class="view" id="view-rules"></div>
       <div class="view" id="view-asst" style="padding:0"></div>
     </div>
@@ -290,11 +292,20 @@ function vStatus(v){
   const days=(new Date(CURM+'-28')-new Date(v.last))/864e5;
   if(days<50)return'active'; if(days<100)return'review'; return'lapsed';
 }
-// 3-month actual average for a vendor
+// 3-month actual average for a vendor (calendar months — can dilute)
 function avg3(v){
   const cut=MONTHS.slice(-3);
   let t=0;(VTX[v.idx]||[]).forEach(i=>{if(cut.includes(TX[i].d.slice(0,7))&&TX[i].t==='e')t+=TX[i].a;});
   return t/3;
+}
+// Typical monthly cost: median of monthly totals over the last 12 ACTIVE months.
+// Skips months with no charge, so a mortgage paid €600/mo reads €600 even if
+// a month is missing from the export.
+function typical(v){
+  const per={};(VTX[v.idx]||[]).forEach(i=>{const t=TX[i];if(t.t!=='e')return;const m=t.d.slice(0,7);per[m]=(per[m]||0)+t.a;});
+  const vals=Object.keys(per).sort().slice(-12).map(k=>per[k]).sort((a,b)=>a-b);
+  if(!vals.length)return 0;
+  return vals.length%2?vals[(vals.length-1)/2]:(vals[vals.length/2-1]+vals[vals.length/2])/2;
 }
 function avHtml(v,sz,idp){
   sz=sz||38;const br=sz<=28?7:sz<=34?8:10;
@@ -321,7 +332,7 @@ function sum(arr,f){return arr.reduce((a,x)=>a+f(x),0);}
 // ═════════════ NAV ═════════════
 const TITLES={dashboard:['Overview','Dashboard'],networth:['Wealth','Net Worth'],cashflow:['Money In / Out','Cash Flow'],
   running:['Burn Rate','Running Costs'],subs:['Recurring','Subscriptions'],tx:['Ledger','Transactions'],
-  cats:['Breakdown','Categories'],rules:['Automation','Rules Engine'],asst:['AI','Assistant']};
+  cats:['Breakdown','Categories'],ltd:['AppSumo','Lifetime Deals'],rules:['Automation','Rules Engine'],asst:['AI','Assistant']};
 const RENDER={};
 function nav(v){
   S.view=v;
@@ -350,7 +361,7 @@ RENDER.dashboard=function(){
   const cur=MSER[CURM];
   const nw=nwTotal();
   const recV=V.filter(v=>v.type==='e'&&isRecurring(v)&&vStatus(v)!=='lapsed'&&vStatus(v)!=='cancelled');
-  const recMo=sum(recV,v=>avg3(v));
+  const recMo=sum(recV,v=>typical(v));
 
   const maxB=Math.max(...mo.map(m=>Math.max(MSER[m].inc,MSER[m].exp)));
   const maxY=Math.ceil(maxB/2000)*2000;const H=200;
@@ -373,7 +384,7 @@ RENDER.dashboard=function(){
   const dlg=gl.slice(0,9).map(([g,t])=>`<div class="dl-item" onclick="S.tGroup='${esc(g)}';S.tPage=1;nav('tx')"><div class="dl-dot" style="background:${GC[g]||'#6B7280'}"></div><span class="dl-nm">${g}</span><span class="mono" style="font-size:12px">${fmt0(t)}</span></div>`).join('');
 
   // Top running costs (active recurring by 3-mo avg)
-  const top=recV.map(v=>({v,m:avg3(v)})).filter(x=>x.m>1).sort((a,b)=>b.m-a.m).slice(0,8);
+  const top=recV.map(v=>({v,m:typical(v)})).filter(x=>x.m>1).sort((a,b)=>b.m-a.m).slice(0,8);
   const topH=top.map(({v,m})=>`<div class="asset-row" style="margin-bottom:7px;cursor:pointer" onclick="vendorModal(${v.idx})">${avHtml(v,34,'dtv')}<div class="asset-info"><div class="asset-nm">${esc(v.name)}</div><div class="asset-ty">${v.group} · ${v.count}× lifetime</div></div><div class="mono" style="font-size:13px;font-weight:600;color:var(--expense-t)">${fmt(m)}<span style="font-size:10px;color:var(--dimmed);font-weight:400">/mo</span></div></div>`).join('');
 
   // Recent
@@ -418,7 +429,7 @@ RENDER.dashboard=function(){
   </div>
 </div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
-  <div><div class="sec-hdr"><div><div class="sec-t">Top Running Costs</div><div class="sec-s">3-month actual average</div></div><button class="btn btn-ghost btn-sm" onclick="nav('running')">View all &#8594;</button></div>${topH}</div>
+  <div><div class="sec-hdr"><div><div class="sec-t">Top Running Costs</div><div class="sec-s">typical monthly cost (median of active months)</div></div><button class="btn btn-ghost btn-sm" onclick="nav('running')">View all &#8594;</button></div>${topH}</div>
   <div><div class="sec-hdr"><div><div class="sec-t">Recent Activity</div><div class="sec-s">Latest transactions</div></div><button class="btn btn-ghost btn-sm" onclick="nav('tx')">View all &#8594;</button></div>${recH}</div>
 </div>`;
   loadLogos('dtv',top.map(x=>x.v));
@@ -536,6 +547,7 @@ RENDER.running=function(){
 <td class="mono" style="font-size:12px">${v.count}&times;</td>
 <td class="mono" style="font-size:11.5px;color:var(--muted)">${fmtD(v.first)} &#8594; ${fmtD(v.last)}</td>
 <td class="mono" style="font-weight:600;color:var(--expense-t)">${fmt(v.avgMonthly)}</td>
+<td class="mono" style="font-size:12px;color:var(--warn)">${fmt(typical(v))}</td>
 <td class="mono" style="font-size:12.5px">${fmt0(v.total)}</td>
 <td><span class="badge b-${st}"><span class="bdot"></span>${st}</span></td></tr>`;
   }).join('');
@@ -556,7 +568,7 @@ RENDER.running=function(){
     <option value="name:1"${S.rSort==='name'?' selected':''}>Name A&#8211;Z</option></select>
   <span class="res-ct">${l.length} vendors${l.length>300?' (showing 300)':''}</span>
 </div>
-<table class="tbl"><thead><tr><th>Vendor</th><th>Type</th><th>Charges</th><th>Active period</th><th>Avg / month</th><th>Lifetime</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+<table class="tbl"><thead><tr><th>Vendor</th><th>Type</th><th>Charges</th><th>Active period</th><th>Avg / month</th><th>Typical / mo</th><th>Lifetime</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
   loadLogos('rv',l.slice(0,300));
 };
 
@@ -566,7 +578,7 @@ function subsList(){
   if(S.sSearch){const q=S.sSearch.toLowerCase();l=l.filter(v=>v.name.toLowerCase().includes(q));}
   if(S.sGroup)l=l.filter(v=>v.group===S.sGroup);
   if(S.sStatus)l=l.filter(v=>vStatus(v)===S.sStatus);
-  l.sort((a,b)=>avg3(b)-avg3(a));
+  l.sort((a,b)=>typical(b)-typical(a));
   return l;
 }
 RENDER.subs=function(){
@@ -574,10 +586,10 @@ RENDER.subs=function(){
   const all=V.filter(v=>v.type==='e'&&isRecurring(v));
   const l=subsList();
   const act=all.filter(v=>['active','review'].includes(vStatus(v)));
-  const mo=sum(act,v=>avg3(v));
+  const mo=sum(act,v=>typical(v));
   const groups=[...new Set(all.map(v=>v.group))].sort();
   const cards=l.slice(0,120).map(v=>{
-    const st=vStatus(v);const m3=avg3(v);
+    const st=vStatus(v);const m3=typical(v);
     return `<div class="sub-card">
 <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
   <div style="display:flex;align-items:center;gap:11px;min-width:0">${avHtml(v,38,'sv')}
@@ -589,7 +601,7 @@ RENDER.subs=function(){
     </div></div>
 </div>
 <div style="margin-top:14px;display:flex;align-items:flex-end;justify-content:space-between">
-  <div><div class="mono" style="font-size:21px;font-weight:600">${fmt(m3||v.avgMonthly)}</div><div style="font-size:10.5px;color:var(--dimmed)">per month (3-mo actual)</div></div>
+  <div><div class="mono" style="font-size:21px;font-weight:600">${fmt(m3||v.avgMonthly)}</div><div style="font-size:10.5px;color:var(--dimmed)">per month (typical)</div></div>
   <span class="badge b-cycle">${v.count}&times; lifetime</span>
 </div>
 <div style="margin-top:13px;padding-top:13px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:5px;font-size:12px">
@@ -600,7 +612,7 @@ RENDER.subs=function(){
   }).join('');
   el.innerHTML=`
 <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
-  <div class="kpi"><div class="kpi-l">Monthly recurring</div><div class="kpi-v mono">${fmt0(mo)}</div><div class="kpi-s">active + review, 3-mo actual</div></div>
+  <div class="kpi"><div class="kpi-l">Monthly recurring</div><div class="kpi-v mono">${fmt0(mo)}</div><div class="kpi-s">active + review, typical monthly</div></div>
   <div class="kpi"><div class="kpi-l">Annual projection</div><div class="kpi-v mono">${fmt0(mo*12)}</div></div>
   <div class="kpi"><div class="kpi-l">Recurring vendors</div><div class="kpi-v mono">${all.length}</div><div class="kpi-s">${act.length} currently active</div></div>
   <div class="kpi"><div class="kpi-l">Need review</div><div class="kpi-v mono" style="color:var(--warn)">${all.filter(v=>vStatus(v)==='review').length}</div><div class="kpi-s">not charged in 50–100 days</div></div>
@@ -730,7 +742,7 @@ function vendorModal(idx){
 <div class="modal-bd">
 <div class="stat-grid">
   <div class="stat"><div class="l">Avg / month</div><div class="v mono" style="color:var(--expense-t)">${fmt(v.avgMonthly)}</div></div>
-  <div class="stat"><div class="l">3-mo actual</div><div class="v mono">${fmt(avg3(v))}</div></div>
+  <div class="stat"><div class="l">Typical / mo</div><div class="v mono" style="color:var(--warn)">${fmt(typical(v))}</div></div>
   <div class="stat"><div class="l">Lifetime</div><div class="v mono">${fmt0(v.total)}</div></div>
   <div class="stat"><div class="l">Charges</div><div class="v mono">${v.count}&times; over ${v.spanMonths} mo</div></div>
 </div>
@@ -764,6 +776,49 @@ function monthModal(m){
 <button class="btn btn-sec" style="margin-top:14px" onclick="closeModal();S.tYear='';S.tSearch='';S.tGroup='';S.tCat='';S.tPage=1;nav('tx');S.tSearch='';">Open full ledger &#8594;</button>
 </div>`);
 }
+
+// ═════════════ LIFETIME DEALS (AppSumo) ═════════════
+let LTD_SORT='d',LTD_DIR=-1,LTD_Q='';
+RENDER.ltd=function(){
+  const el=document.getElementById('view-ltd');
+  const all=RAW.appsumo||[];
+  if(!all.length){el.innerHTML='<div class="empty"><div class="empty-ic">&#9889;</div><div>No AppSumo data loaded.</div></div>';return;}
+  let l=all;
+  if(LTD_Q){const q=LTD_Q.toLowerCase();l=l.filter(x=>x[1].toLowerCase().includes(q));}
+  const key={d:x=>x[0],n:x=>x[1].toLowerCase(),a:x=>x[2]};
+  l=[...l].sort((x,y)=>{const a=key[LTD_SORT](x),b=key[LTD_SORT](y);return(a<b?-1:a>b?1:0)*LTD_DIR;});
+  const tot=sum(all,x=>x[2]);
+  const paid=all.filter(x=>x[2]>0);
+  const byYear={};all.forEach(x=>{const y=x[0].slice(0,4);byYear[y]=(byYear[y]||0)+x[2];});
+  const years=Object.keys(byYear).sort();
+  const mxy=Math.max(...Object.values(byYear),1);
+  const yearBars=years.map(y=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px"><div class="mono" style="font-size:10px;color:var(--muted)">$${Math.round(byYear[y]/1000*10)/10}k</div><div style="width:70%;max-width:46px;height:${Math.max(3,byYear[y]/mxy*120)}px;background:var(--warn);border-radius:4px 4px 0 0;opacity:.85"></div><div class="mono" style="font-size:10.5px;color:var(--dimmed)">${y}</div></div>`).join('');
+  const rows=l.map(x=>`<tr><td class="mono" style="font-size:11.5px;color:var(--muted)">${fmtD(x[0])}</td><td style="font-size:12.5px;font-weight:500">${esc(x[1])}</td><td class="mono" style="font-weight:600;color:${x[2]>0?'var(--warn)':'var(--income-t)'}">${x[2]>0?'$'+x[2].toFixed(2):'FREE'}</td></tr>`).join('');
+  const arrow=k=>LTD_SORT===k?(LTD_DIR===-1?' &#9662;':' &#9652;'):'';
+  el.innerHTML=`
+<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
+  <div class="kpi" style="border-color:rgba(245,158,11,.4);background:rgba(245,158,11,.06)"><div class="kpi-l" style="color:var(--warn)">Lifetime invested</div><div class="kpi-v mono">$${tot.toLocaleString('en-US',{maximumFractionDigits:0})}</div><div class="kpi-s">AppSumo · ${years[0]}–${years[years.length-1]}</div></div>
+  <div class="kpi"><div class="kpi-l">Deals bought</div><div class="kpi-v mono">${all.length}</div><div class="kpi-s">${paid.length} paid · ${all.length-paid.length} free</div></div>
+  <div class="kpi"><div class="kpi-l">Avg deal price</div><div class="kpi-v mono">$${(tot/paid.length).toFixed(0)}</div></div>
+  <div class="kpi"><div class="kpi-l">Equivalent /mo</div><div class="kpi-v mono">$${(tot/((years.length)*12)).toFixed(0)}</div><div class="kpi-s">spread over ${years.length} years</div></div>
+</div>
+<div class="chart-row" style="grid-template-columns:1fr 2fr">
+  <div class="chart-card"><div class="sec-t">Spend by Year</div><div class="sec-s" style="margin-bottom:14px">USD</div><div style="display:flex;align-items:flex-end;gap:6px;height:170px">${yearBars}</div></div>
+  <div class="chart-card" style="display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+      <div style="flex:1"><div class="sec-t">All Lifetime Deals</div><div class="sec-s">One-off payments, lifetime products — kept out of the monthly burn figures</div></div>
+      <div class="srch"><span class="si">&#128269;</span><input placeholder="Search deals…" value="${esc(LTD_Q)}" oninput="LTD_Q=this.value;RENDER.ltd()"></div>
+    </div>
+    <div style="overflow-y:auto;max-height:52vh">
+    <table class="tbl"><thead><tr>
+      <th onclick="ltdSort('d')">Date${arrow('d')}</th>
+      <th onclick="ltdSort('n')">Product${arrow('n')}</th>
+      <th onclick="ltdSort('a')">Price${arrow('a')}</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>
+  </div>
+</div>`;
+};
+function ltdSort(k){if(LTD_SORT===k)LTD_DIR*=-1;else{LTD_SORT=k;LTD_DIR=k==='n'?1:-1;}RENDER.ltd();}
 
 // ═════════════ RULES ═════════════
 function matchRule(v,r){
@@ -893,6 +948,12 @@ function answer(q,raw){
 &#8226; <span class="hl">sync wallet</span> — pull latest from BudgetBakers`);return;}
   // sync wallet
   if(/sync|budgetbakers|wallet|draw down|pull/.test(q)&&/sync|wallet|bakers|pull|draw/.test(q)){syncWallet();return;}
+  // appsumo / lifetime deals
+  if(/appsumo|lifetime deal|ltd/.test(q)){
+    const all=RAW.appsumo||[];const tot=sum(all,x=>x[2]);
+    const byY={};all.forEach(x=>{byY[x[0].slice(0,4)]=(byY[x[0].slice(0,4)]||0)+x[2];});
+    nav('ltd');
+    botSay(`You've bought <span class="hl">${all.length} AppSumo lifetime deals</span> totalling <span class="hl mono">$${tot.toLocaleString('en-US',{maximumFractionDigits:0})}</span>.<br>${Object.entries(byY).sort().map(([y,t])=>`&#8226; ${y}: <span class="mono">$${Math.round(t).toLocaleString()}</span>`).join('<br>')}<br><br>Opened the Lifetime Deals view for you.`);return;}
   // net worth
   if(/net ?worth/.test(q)){const t=nwTotal();
     botSay(`Your net worth is <span class="hl mono">${fmt0(t.net)}</span><br>Assets <span class="inc mono">${fmt0(t.assets)}</span> − Liabilities <span class="exp mono">${fmt0(t.liab)}</span><br><br>${S.assets.length?S.assets.map(a=>`${a.kind==='asset'?'&#9650;':'&#9660;'} ${esc(a.name)}: <span class="mono">${fmt0(a.value)}</span>`).join('<br>'):'No assets added yet — try "add asset House 385000".'}`);return;}
@@ -918,9 +979,9 @@ function answer(q,raw){
   // subscriptions
   if(/subscriptions?$|recurring summary/.test(q)){
     const subs=V.filter(v=>v.type==='e'&&isRecurring(v)&&['active','review'].includes(vStatus(v)));
-    const mo=sum(subs,v=>avg3(v));
-    const top=subs.map(v=>({v,m:avg3(v)})).sort((a,b)=>b.m-a.m).slice(0,10);
-    botSay(`You have <span class="hl">${subs.length} active recurring vendors</span> costing <span class="hl mono">${fmt0(mo)}/month</span> (${fmt0(mo*12)}/yr).<br>${vtable(top.map(x=>x.v),v=>avg3(v),'€/mo (3-mo avg)')}`);return;}
+    const mo=sum(subs,v=>typical(v));
+    const top=subs.map(v=>({v,m:typical(v)})).sort((a,b)=>b.m-a.m).slice(0,10);
+    botSay(`You have <span class="hl">${subs.length} active recurring vendors</span> costing <span class="hl mono">${fmt0(mo)}/month</span> (${fmt0(mo*12)}/yr).<br>${vtable(top.map(x=>x.v),v=>typical(v),'€/mo typical')}`);return;}
   // report month year
   m=q.match(/report\s+(\w+)\s*(\d{4})?/);
   if(m&&m[1]!=='for'){
