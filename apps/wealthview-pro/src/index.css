@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import 'react-grid-layout/css/styles.css';
+@import 'react-resizable/css/styles.css';
+
+html, body, #root { height: 100%; }
+* { scrollbar-width: thin; scrollbar-color: #232B3B transparent; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: #232B3B; border-radius: 3px; }
+
+.react-grid-item.react-grid-placeholder {
+  background: rgba(99, 102, 241, 0.2) !important;
+  border-radius: 12px;
+}
+.react-resizable-handle { opacity: 0.35; }
+
+@layer components {
+  .card { @apply bg-surface border border-line rounded-xl; }
+  .kpi-label { @apply text-[11px] font-medium uppercase tracking-wider text-muted; }
+  .btn { @apply inline-flex items-center gap-2 h-9 px-4 rounded-lg text-sm font-medium transition-colors; }
+  .btn-primary { @apply btn bg-accent text-white hover:bg-accent-hover; }
+  .btn-secondary { @apply btn bg-surface border border-line hover:border-accent; }
+  .input { @apply h-9 px-3 bg-surface border border-line rounded-lg text-sm outline-none focus:border-accent placeholder:text-dimmed; }
+}
