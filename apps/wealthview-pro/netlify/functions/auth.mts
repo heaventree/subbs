@@ -31,7 +31,9 @@ async function hmac(s: string) {
 }
 
 async function turso(stmts: { sql: string; args?: (string | number)[] }[]) {
-  const url = (process.env.TURSO_URL || '').replace('libsql://', 'https://') + '/v2/pipeline'
+  const raw = (process.env.TURSO_URL || '').trim().replace(/^["']|["']$/g, '')
+  if (!/^(libsql|https):\/\/[a-z0-9.-]+/i.test(raw)) throw new Error('TURSO_URL missing or malformed: "' + raw.slice(0, 40) + '"')
+  const url = raw.replace('libsql://', 'https://').replace(/\/+$/, '') + '/v2/pipeline'
   const requests: unknown[] = stmts.map((x) => ({
     type: 'execute',
     stmt: {
@@ -41,12 +43,12 @@ async function turso(stmts: { sql: string; args?: (string | number)[] }[]) {
     },
   }))
   requests.push({ type: 'close' })
-  const r = await fetch(url, {
+  const r = await safeFetch('turso', url, {
     method: 'POST',
-    headers: { Authorization: 'Bearer ' + process.env.TURSO_TOKEN, 'Content-Type': 'application/json' },
+    headers: { Authorization: 'Bearer ' + (process.env.TURSO_TOKEN || '').trim(), 'Content-Type': 'application/json' },
     body: JSON.stringify({ requests }),
   })
-  if (!r.ok) throw new Error('turso ' + r.status)
+  if (!r.ok) throw new Error('turso HTTP ' + r.status)
   const j = await r.json()
   const bad = (j.results ?? []).find((x: { type: string }) => x.type === 'error')
   if (bad) throw new Error(bad.error?.message ?? 'turso error')
@@ -56,7 +58,25 @@ async function turso(stmts: { sql: string; args?: (string | number)[] }[]) {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 
+// fetch that names its upstream and surfaces the network cause (ENOTFOUND etc.)
+async function safeFetch(label: string, url: string, init: RequestInit) {
+  try {
+    return await fetch(url, init)
+  } catch (e) {
+    const cause = (e as { cause?: { code?: string; message?: string } }).cause
+    throw new Error(`${label} unreachable: ${cause?.code ?? cause?.message ?? (e as Error).message}`)
+  }
+}
+
 export default async (req: Request) => {
+  try {
+    return await handle(req)
+  } catch (e) {
+    return json({ error: (e as Error).message }, 500)
+  }
+}
+
+async function handle(req: Request) {
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
   const action = new URL(req.url).pathname.split('/').pop()
   let body: { email?: string; code?: string; token?: string }
@@ -76,9 +96,9 @@ export default async (req: Request) => {
     ])
     if (process.env.ALLOW_DEV_CODE === '1') return json({ ok: true, sent: true, devCode: code })
     if (!process.env.RESEND_API_KEY) return json({ error: 'RESEND_API_KEY not configured' }, 500)
-    const mail = await fetch('https://api.resend.com/emails', {
+    const mail = await safeFetch('resend', 'https://api.resend.com/emails', {
       method: 'POST',
-      headers: { Authorization: 'Bearer ' + process.env.RESEND_API_KEY, 'Content-Type': 'application/json' },
+      headers: { Authorization: 'Bearer ' + (process.env.RESEND_API_KEY || '').trim(), 'Content-Type': 'application/json' },
       body: JSON.stringify({
         from: 'Wealthview <onboarding@resend.dev>',
         to: [email],

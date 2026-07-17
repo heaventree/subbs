@@ -1,9 +1,9 @@
+@import 'react-grid-layout/css/styles.css';
+@import 'react-resizable/css/styles.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import 'react-grid-layout/css/styles.css';
-@import 'react-resizable/css/styles.css';
 
 html, body, #root { height: 100%; }
 * { scrollbar-width: thin; scrollbar-color: #232B3B transparent; }
