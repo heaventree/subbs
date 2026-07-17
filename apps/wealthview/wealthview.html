@@ -208,8 +208,9 @@ select.form-in{cursor:pointer}
       <div class="nav-sec">Tools</div>
       <div class="nav-item" data-v="rules" onclick="nav('rules')"><span class="ni">&#9881;</span>Rules Engine</div>
       <div class="nav-item" data-v="asst" onclick="nav('asst')"><span class="ni">&#10022;</span>Assistant</div>
+      <div class="nav-item" data-v="notes" onclick="nav('notes')"><span class="ni">&#9998;</span>Dev Notes <span id="nb-ct" style="margin-left:auto;font-size:10.5px;background:var(--accent-12);color:var(--accent-h);border-radius:99px;padding:1px 7px"></span></div>
     </nav>
-    <div class="sb-user"><div class="sb-user-in"><div class="av-user">SO</div><div style="min-width:0"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Sean O&#39;Byrne</div><div style="font-size:11px;color:var(--muted)">Heaventree Ltd.</div></div></div></div>
+    <div class="sb-user"><div class="sb-user-in"><div class="av-user">SO</div><div style="min-width:0"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Sean O&#39;Byrne</div><div style="font-size:11px;color:var(--muted)">Heaventree Ltd. · <span style="color:var(--accent-h)">build 17.07-holdings</span></div></div></div></div>
   </aside>
   <div id="main">
     <div class="topbar">
@@ -227,12 +228,24 @@ select.form-in{cursor:pointer}
       <div class="view" id="view-cats"></div>
       <div class="view" id="view-ltd"></div>
       <div class="view" id="view-rules"></div>
+      <div class="view" id="view-notes"></div>
       <div class="view" id="view-asst" style="padding:0"></div>
     </div>
   </div>
 </div>
 <div class="modal-bg" id="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
+<div id="note-fab" onclick="noteOpen()" title="Add a dev note (or press N)" style="position:fixed;bottom:22px;left:252px;z-index:800;width:44px;height:44px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;cursor:pointer;box-shadow:0 6px 24px rgba(99,102,241,.45)">&#9998;</div>
+<div id="note-pop" style="position:fixed;bottom:76px;left:252px;z-index:801;width:340px;background:var(--raised);border:1px solid var(--border);border-radius:14px;padding:16px;display:none;box-shadow:0 16px 48px rgba(0,0,0,.55)">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:9px"><span style="font-size:13px;font-weight:600">New note</span><span id="note-ctx" style="font-size:11px;color:var(--dimmed)"></span></div>
+  <textarea id="note-txt" placeholder="What's wrong / what should change here…" style="width:100%;height:84px;background:var(--canvas);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:13px;padding:9px 11px;outline:none;resize:vertical;font-family:inherit"></textarea>
+  <div style="display:flex;align-items:center;gap:7px;margin-top:9px">
+    <select id="note-sev" class="flt" style="height:31px"><option value="bug">&#128027; Bug</option><option value="data">&#128202; Data wrong</option><option value="idea">&#128161; Idea</option><option value="ui">&#127912; UI</option></select>
+    <span style="flex:1"></span>
+    <button class="btn btn-sm btn-ghost" onclick="noteClose()">Cancel</button>
+    <button class="btn btn-sm btn-primary" onclick="noteSave()">Save (Ctrl+Enter)</button>
+  </div>
+</div>
 <script>
 'use strict';
 // ═════════════ DATA ═════════════
@@ -306,7 +319,8 @@ const S={view:'dashboard',range:12,vSearch:'',vType:'e',vSort:'total',
   rec:JSON.parse(localStorage.getItem('wv_rec')||'{}'),       // vendor recurring overrides
   rules:JSON.parse(localStorage.getItem('wv_rules')||'[]'),
   assets:JSON.parse(localStorage.getItem('wv_assets')||'[]'),
-  holdings:JSON.parse(localStorage.getItem('wv_holdings')||'[]'),  // {id,ticker,name,shares,ccy,price,priceAt,src}
+  holdings:JSON.parse(localStorage.getItem('wv_holdings')||'[]'),
+  notes:JSON.parse(localStorage.getItem('wv_notes')||'[]'),   // {id,text,view,sev,status,at}  // {id,ticker,name,shares,ccy,price,priceAt,src}
   fx:JSON.parse(localStorage.getItem('wv_fx')||'{}'),              // {USD:0.92,...} to EUR
   nwHist:JSON.parse(localStorage.getItem('wv_nwhist')||'[]'),
   rSearch:'',rGroup:'',rMin:3,rSort:'avg',rDir:-1,
@@ -316,7 +330,7 @@ const S={view:'dashboard',range:12,vSearch:'',vType:'e',vSort:'total',
   tSearch:'',tType:'all',tGroup:'',tCat:'',tYear:'',tMin:'',tMax:'',tRec:'',tPage:1,tSort:'d',tDir:-1,
   cfYear:'',
 };
-function save(){['ov','rec','rules','assets','nwHist','owner','holdings','fx'].forEach(k=>localStorage.setItem('wv_'+(k==='nwHist'?'nwhist':k),JSON.stringify(S[k])));localStorage.setItem('wv_amtmode',S.amtMode);}
+function save(){['ov','rec','rules','assets','nwHist','owner','holdings','fx','notes'].forEach(k=>localStorage.setItem('wv_'+(k==='nwHist'?'nwhist':k),JSON.stringify(S[k])));localStorage.setItem('wv_amtmode',S.amtMode);}
 
 // ═════════════ HELPERS ═════════════
 const fmt=n=>new Intl.NumberFormat('en-IE',{style:'currency',currency:'EUR',minimumFractionDigits:2}).format(n);
@@ -410,7 +424,7 @@ function amtSign(t){return t==='i'?'+':t==='x'?'⇄':'-';}
 // ═════════════ NAV ═════════════
 const TITLES={dashboard:['Overview','Dashboard'],networth:['Wealth','Net Worth'],cashflow:['Money In / Out','Cash Flow'],
   running:['Burn Rate','Running Costs'],subs:['Recurring','Subscriptions'],vendors:['Directory','Vendors'],tx:['Ledger','Transactions'],
-  cats:['Breakdown','Categories'],ltd:['AppSumo','Lifetime Deals'],rules:['Automation','Rules Engine'],asst:['AI','Assistant']};
+  cats:['Breakdown','Categories'],ltd:['AppSumo','Lifetime Deals'],rules:['Automation','Rules Engine'],notes:['Feedback','Dev Notes'],asst:['AI','Assistant']};
 const RENDER={};
 function nav(v){
   S.view=v;
@@ -853,7 +867,9 @@ RENDER.vendors=function(){
     const streams=new Set();(VTX[v.idx]||[]).forEach(i=>streams.add(TX[i].w));
     return `<tr class="rowh">
 <td onclick="vendorModal(${v.idx})"><div style="display:flex;align-items:center;gap:10px">${avHtml(v,30,'vd')}<div style="min-width:0"><div style="font-weight:500;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:230px">${esc(v.name)}${S2.names[v.id]?' <span title="renamed" style="color:var(--accent-h);font-size:10px">&#9998;</span>':''}</div><div style="font-size:10.5px;color:var(--dimmed)">${v.group} · ${streams.size} payment stream${streams.size!==1?'s':''}</div></div></div></td>
-<td>${v.type==='i'?'<span class="badge b-active" style="border-radius:6px">income</span>':v.type==='x'?'<span style="font-size:11px;color:var(--muted)">&#8644; transfer</span>':(isRecurring(v)?'<span class="badge b-cycle">&#8635; sub</span>':'<span style="font-size:11px;color:var(--dimmed)">expense</span>')}</td>
+<td>${v.type==='i'?'<span class="badge b-active" style="border-radius:6px">income</span>':v.type==='x'?'<span style="font-size:11px;color:var(--muted)">&#8644; transfer</span>':(isRecurring(v)
+  ?`<span class="badge b-cycle" style="cursor:pointer" title="Click: demote to one-off expense" onclick="event.stopPropagation();setRec('${v.id}',false)">&#8635; sub</span>`
+  :`<span class="badge" style="cursor:pointer;border:1px dashed var(--border);color:var(--dimmed);border-radius:6px" title="Click: mark as subscription" onclick="event.stopPropagation();setRec('${v.id}',true)">expense &#8635;?</span>`)}</td>
 <td class="mono" style="font-size:12px">${v.count}&times;</td>
 <td class="mono" style="font-size:11.5px;color:var(--muted)">${fmtD(v.last)}</td>
 <td class="mono" style="font-size:12.5px;font-weight:600">${fmt0(v.total)}</td>
@@ -1493,6 +1509,72 @@ async function syncWallet(){
   }
 }
 
+// ═════════════ DEV NOTES ═════════════
+function noteBadge(){const e=document.getElementById('nb-ct');if(!e)return;const n=S.notes.filter(x=>x.status!=='done').length;e.textContent=n||'';e.style.display=n?'':'none';}
+function noteOpen(){
+  const pop=document.getElementById('note-pop');
+  document.getElementById('note-ctx').textContent='on: '+(TITLES[S.view]?TITLES[S.view][1]:S.view);
+  pop.style.display='block';
+  const t=document.getElementById('note-txt');t.value='';setTimeout(()=>t.focus(),40);
+}
+function noteClose(){document.getElementById('note-pop').style.display='none';}
+function noteSave(){
+  const txt=document.getElementById('note-txt').value.trim();
+  if(!txt){toast('Empty note','#F59E0B');return;}
+  S.notes.unshift({id:'n'+Math.random().toString(36).slice(2,9),text:txt,
+    view:TITLES[S.view]?TITLES[S.view][1]:S.view,sev:document.getElementById('note-sev').value,
+    status:'todo',at:new Date().toISOString().slice(0,16).replace('T',' ')});
+  save();noteClose();noteBadge();toast('Note saved — see Dev Notes');
+  if(S.view==='notes')RENDER.notes();
+}
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape')noteClose();
+  const typing=/INPUT|TEXTAREA|SELECT/.test(document.activeElement&&document.activeElement.tagName||'');
+  if((e.key==='n'||e.key==='N')&&!typing&&!e.ctrlKey&&!e.metaKey){e.preventDefault();noteOpen();}
+  if(e.key==='Enter'&&e.ctrlKey&&document.getElementById('note-pop').style.display==='block')noteSave();
+});
+const SEV_META={bug:['&#128027;','#EF4444'],data:['&#128202;','#F59E0B'],idea:['&#128161;','#22C55E'],ui:['&#127912;','#8B5CF6']};
+RENDER.notes=function(){
+  const el=document.getElementById('view-notes');
+  const cols=[['todo','To Do'],['doing','In Progress'],['done','Done']];
+  const card=n=>{const[ic,c]=SEV_META[n.sev]||['&#9998;','#6B7280'];
+    return `<div class="card" style="padding:12px 14px;margin-bottom:9px">
+<div style="display:flex;align-items:flex-start;gap:8px"><span style="font-size:14px">${ic}</span>
+<div style="flex:1;min-width:0"><div style="font-size:13px;line-height:1.45;white-space:pre-wrap">${esc(n.text)}</div>
+<div style="font-size:10.5px;color:var(--dimmed);margin-top:6px">${esc(n.view)} · ${esc(n.at)}</div></div>
+<button class="a-del" onclick="delNote('${n.id}')">&#10005;</button></div>
+<div style="display:flex;gap:6px;margin-top:9px">${cols.filter(([k])=>k!==n.status).map(([k,l])=>`<button class="btn btn-sm btn-sec" style="font-size:11px;height:25px" onclick="moveNote('${n.id}','${k}')">${k==='done'?'&#10003; ':''}${l}</button>`).join('')}</div></div>`;};
+  el.innerHTML=`
+<div class="filter-bar">
+  <button class="btn btn-primary" onclick="noteOpen()">&#9998; Add note</button>
+  <button class="btn btn-sec" onclick="notesExport()">&#128203; Copy for dev</button>
+  <button class="btn btn-sec" onclick="notesDownload()">&#8615; Download .md</button>
+  ${S.notes.some(n=>n.status==='done')?`<button class="btn btn-ghost btn-sm" onclick="if(confirm('Clear all DONE notes?')){S.notes=S.notes.filter(n=>n.status!=='done');save();noteBadge();RENDER.notes();}">Clear done</button>`:''}
+  <span class="res-ct">${S.notes.length} notes · press <b>N</b> anywhere to add · export &#8594; paste into the dev chat</span>
+</div>
+${S.notes.length===0?`<div class="empty"><div class="empty-ic">&#9998;</div><div style="max-width:420px">No notes yet. Browse the app, hit the purple &#9998; button (or press <b>N</b>) whenever something looks wrong — it tags the page automatically. Then export the lot here and paste it back to Claude.</div></div>`
+:`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:18px">${cols.map(([k,l])=>`<div><div class="sec-hdr"><div class="sec-t" style="font-size:13.5px;color:${k==='done'?'var(--income-t)':k==='doing'?'var(--warn)':'var(--text)'}">${l} (${S.notes.filter(n=>n.status===k).length})</div></div>${S.notes.filter(n=>n.status===k).map(card).join('')||'<div style="color:var(--dimmed);font-size:12px;padding:8px">—</div>'}</div>`).join('')}</div>`}`;
+};
+function moveNote(id,st){const n=S.notes.find(x=>x.id===id);if(!n)return;n.status=st;save();noteBadge();RENDER.notes();}
+function delNote(id){S.notes=S.notes.filter(x=>x.id!==id);save();noteBadge();RENDER.notes();}
+function notesMd(){
+  const secs=[['todo','TO DO'],['doing','IN PROGRESS'],['done','DONE']];
+  let md='# Wealthview — dev notes export\n_'+new Date().toISOString().slice(0,16).replace('T',' ')+' · '+S.notes.length+' notes_\n';
+  secs.forEach(([k,l])=>{const ns=S.notes.filter(n=>n.status===k);if(!ns.length)return;
+    md+='\n## '+l+'\n';
+    ns.forEach(n=>{md+='- **['+n.sev+'] '+n.view+'** ('+n.at+'): '+n.text.replace(/\n/g,' / ')+'\n';});});
+  return md;
+}
+function notesExport(){
+  const md=notesMd();
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(md).then(()=>toast('Copied — paste into the dev chat')).catch(()=>{notesDownload();});}
+  else notesDownload();
+}
+function notesDownload(){
+  const a=Object.assign(document.createElement('a'),{href:'data:text/markdown;charset=utf-8,'+encodeURIComponent(notesMd()),download:'wealthview-notes.md'});
+  a.click();toast('Notes downloaded');
+}
+
 // ═════════════ EXPORT ═════════════
 function dl(rows,fn){const csv=rows.map(r=>r.map(v=>`"${String(v==null?'':v).replace(/"/g,'""')}"`).join(',')).join('\n');
   const a=Object.assign(document.createElement('a'),{href:'data:text/csv;charset=utf-8,'+encodeURIComponent(csv),download:fn});a.click();toast(`Exported ${rows.length-1} rows`);}
@@ -1502,6 +1584,7 @@ function xRun(){const l=runList();dl([['Vendor','Group','Charges','First','Last'
 // ═════════════ BOOT ═════════════
 rebuild();
 nav('dashboard');
+noteBadge();
 </script>
 </body>
 </html>
