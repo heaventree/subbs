@@ -6,6 +6,7 @@ import { DashboardPage } from './pages/DashboardPage'
 import { LedgerPage } from './pages/LedgerPage'
 import { useApp } from './lib/store'
 import { loadData, type WvData } from './lib/data'
+import { cloudPull, cloudPush } from './lib/turso'
 
 const TITLES: Record<string, [string, string]> = {
   dashboard: ['Overview', 'Dashboard'],
@@ -19,7 +20,21 @@ function App() {
   const { page } = useApp()
   const [data, setData] = useState<WvData | null>(null)
   const [err, setErr] = useState('')
-  useEffect(() => { loadData().then(setData).catch((e) => setErr(String(e))) }, [])
+  useEffect(() => {
+    loadData().then(setData).catch((e) => setErr(String(e)))
+    // Turso: pull newer board/view state, then mirror every change up
+    cloudPull().then((remote) => {
+      if (remote) {
+        try {
+          const parsed = JSON.parse(remote)
+          useApp.setState(parsed.state ?? parsed)
+        } catch { /* ignore malformed remote */ }
+      }
+      useApp.subscribe((s) =>
+        cloudPush(JSON.stringify({ state: { boards: s.boards, ledgerViews: s.ledgerViews, activeBoard: s.activeBoard } })),
+      )
+    })
+  }, [])
 
   const [sub, title] = TITLES[page] ?? ['', page]
   return (

@@ -5,8 +5,10 @@ import json
 with open('/tmp/spendly2_data.json') as f:
     data_json = f.read()
 
-BFKEY = ''  # Brandfetch key here (do not commit)
-DSKEY = ''  # DeepSeek key here (do not commit)
+BFKEY = ''  # Brandfetch key (do not commit)
+DSKEY = ''  # DeepSeek key (do not commit)
+TURSOURL = ''  # libsql://… (do not commit)
+TURSOTOK = ''  # Turso auth token (do not commit)
 
 TEMPLATE = r'''<!doctype html>
 <html lang="en">
@@ -221,7 +223,7 @@ select.form-in{cursor:pointer}
       <div class="nav-item" data-v="asst" onclick="nav('asst')"><span class="ni">&#10022;</span>Assistant</div>
       <div class="nav-item" data-v="notes" onclick="nav('notes')"><span class="ni">&#9998;</span>Dev Notes <span id="nb-ct" style="margin-left:auto;font-size:10.5px;background:var(--accent-12);color:var(--accent-h);border-radius:99px;padding:1px 7px"></span></div>
     </nav>
-    <div class="sb-user"><div class="sb-user-in"><div class="av-user">SO</div><div style="min-width:0"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Sean O&#39;Byrne</div><div style="font-size:11px;color:var(--muted)">Heaventree Ltd. · <span style="color:var(--accent-h)">build 17.07-b</span></div></div></div></div>
+    <div class="sb-user"><div class="sb-user-in"><div class="av-user">SO</div><div style="min-width:0"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Sean O&#39;Byrne</div><div style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:5px">Heaventree Ltd. · <span style="color:var(--accent-h)">build 17.07-c</span> <span id="db-dot" style="width:7px;height:7px;border-radius:50%;background:#5B6373;display:inline-block" title="Turso"></span></div></div></div></div>
   </aside>
   <div id="main">
     <div class="topbar">
@@ -264,6 +266,8 @@ const RAW=__DATA__;
 const BFKEY=localStorage.getItem('wv_bfkey')||'__BFKEY__';
 const DSKEY=()=>localStorage.getItem('wv_dskey')||'__DSKEY__';
 const FHKEY=()=>localStorage.getItem('wv_fhkey')||'';
+const TURSO_URL=()=>localStorage.getItem('wv_turso_url')||'__TURSOURL__';
+const TURSO_TOKEN=()=>localStorage.getItem('wv_turso_token')||'__TURSOTOK__';
 const LOGOC={};
 
 // Expand compact tx: [date, vendorIdx, amount, catIdx, type, recurring]
@@ -332,7 +336,7 @@ const S2={
   names:JSON.parse(localStorage.getItem('wv_names')||'{}'),   // vendorId -> display name
   merges:JSON.parse(localStorage.getItem('wv_merges')||'{}'), // absorbedId -> primaryId
 };
-function saveS2(){localStorage.setItem('wv_names',JSON.stringify(S2.names));localStorage.setItem('wv_merges',JSON.stringify(S2.merges));}
+function saveS2(){localStorage.setItem('wv_names',JSON.stringify(S2.names));localStorage.setItem('wv_merges',JSON.stringify(S2.merges));if(typeof schedulePush==='function')schedulePush();}
 const S={view:'dashboard',range:12,vSearch:'',vType:'e',vSort:'total',
   ov:JSON.parse(localStorage.getItem('wv_ov')||'{}'),         // vendor status overrides
   rec:JSON.parse(localStorage.getItem('wv_rec')||'{}'),       // vendor recurring overrides
@@ -350,7 +354,7 @@ const S={view:'dashboard',range:12,vSearch:'',vType:'e',vSort:'total',
   tSearch:'',tType:'all',tGroup:'',tCat:'',tYear:'',tMin:'',tMax:'',tRec:'',tPage:1,tSort:'d',tDir:-1,
   cfYear:'',
 };
-function save(){['ov','rec','rules','assets','nwHist','owner','holdings','fx','notes','typeOv'].forEach(k=>localStorage.setItem('wv_'+(k==='nwHist'?'nwhist':k==='typeOv'?'typeov':k),JSON.stringify(S[k])));localStorage.setItem('wv_amtmode',S.amtMode);}
+function save(){['ov','rec','rules','assets','nwHist','owner','holdings','fx','notes','typeOv'].forEach(k=>localStorage.setItem('wv_'+(k==='nwHist'?'nwhist':k==='typeOv'?'typeov':k),JSON.stringify(S[k])));localStorage.setItem('wv_amtmode',S.amtMode);if(typeof schedulePush==='function')schedulePush();}
 
 // ═════════════ HELPERS ═════════════
 const fmt=n=>new Intl.NumberFormat('en-IE',{style:'currency',currency:'EUR',minimumFractionDigits:2}).format(n);
@@ -455,6 +459,90 @@ function sum(arr,f){return arr.reduce((a,x)=>a+f(x),0);}
 // Amount colour + sign by tx type ('i' income, 'x' transfer, 'e' expense)
 function amtCol(t){return t==='i'?'var(--income-t)':t==='x'?'var(--muted)':'var(--expense-t)';}
 function amtSign(t){return t==='i'?'+':t==='x'?'⇄':'-';}
+
+// ═════════════ TURSO CLOUD SYNC ═════════════
+// All user edits (renames, merges, statuses, owners, holdings, notes, rules…)
+// mirror to a Turso kv table: last-write-wins per key. localStorage stays the
+// offline cache, so the app works fully without the cloud.
+let DB_OK=null, _pushT=null;
+const SYNC_GET={
+  ov:()=>S.ov, rec:()=>S.rec, rules:()=>S.rules, assets:()=>S.assets,
+  nwHist:()=>S.nwHist, owner:()=>S.owner, holdings:()=>S.holdings,
+  notes:()=>S.notes, typeOv:()=>S.typeOv, names:()=>S2.names,
+  merges:()=>S2.merges, amtMode:()=>S.amtMode,
+};
+const SYNC_SET={
+  ov:v=>S.ov=v, rec:v=>S.rec=v, rules:v=>S.rules=v, assets:v=>S.assets=v,
+  nwHist:v=>S.nwHist=v, owner:v=>S.owner=v, holdings:v=>S.holdings=v,
+  notes:v=>S.notes=v, typeOv:v=>S.typeOv=v, names:v=>S2.names=v,
+  merges:v=>S2.merges=v, amtMode:v=>S.amtMode=v,
+};
+const SM=JSON.parse(localStorage.getItem('wv_syncmeta')||'{}');   // key -> ts
+const _pushed={};                                                  // key -> last pushed JSON
+function smSave(){localStorage.setItem('wv_syncmeta',JSON.stringify(SM));}
+async function tq(stmts){
+  const u=TURSO_URL(),t=TURSO_TOKEN();
+  if(!u||!t)throw new Error('no-turso');
+  const requests=stmts.map(x=>({type:'execute',stmt:{sql:x.sql,
+    args:(x.args||[]).map(a=>typeof a==='number'?{type:'integer',value:String(Math.round(a))}:{type:'text',value:String(a)})}}));
+  requests.push({type:'close'});
+  const r=await fetch(u.replace('libsql://','https://')+'/v2/pipeline',{
+    method:'POST',headers:{Authorization:'Bearer '+t,'Content-Type':'application/json'},
+    signal:(AbortSignal&&AbortSignal.timeout)?AbortSignal.timeout(15000):undefined,
+    body:JSON.stringify({requests})});
+  if(!r.ok)throw new Error('HTTP '+r.status);
+  const j=await r.json();
+  const bad=(j.results||[]).find(x=>x.type==='error');
+  if(bad)throw new Error((bad.error&&bad.error.message)||'turso error');
+  return j.results;
+}
+function dbDot(){
+  const el=document.getElementById('db-dot');if(!el)return;
+  el.style.background=DB_OK===true?'#34D399':DB_OK===false?'#F87171':'#5B6373';
+  el.title=DB_OK===true?'Turso: synced':DB_OK===false?'Turso: offline (edits kept locally)':'Turso: connecting…';
+}
+function schedulePush(){
+  clearTimeout(_pushT);
+  _pushT=setTimeout(async()=>{
+    const now=Date.now(),stmts=[],keys=[];
+    for(const k in SYNC_GET){
+      const v=JSON.stringify(SYNC_GET[k]());
+      if(_pushed[k]===v)continue;
+      stmts.push({sql:'INSERT INTO kv (k,v,ts) VALUES (?,?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v,ts=excluded.ts',args:[k,v,now]});
+      keys.push([k,v]);
+    }
+    if(!stmts.length)return;
+    try{
+      await tq(stmts);
+      keys.forEach(([k,v])=>{_pushed[k]=v;SM[k]=now;});
+      smSave();DB_OK=true;dbDot();
+    }catch(e){DB_OK=false;dbDot();}
+  },2000);
+}
+async function cloudBoot(){
+  try{
+    await tq([{sql:'CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT, ts INTEGER)'}]);
+    const res=await tq([{sql:'SELECT k,v,ts FROM kv'}]);
+    const rows=(res[0]&&res[0].response&&res[0].response.result&&res[0].response.result.rows)||[];
+    let applied=0;
+    rows.forEach(r=>{
+      const k=r[0]&&r[0].value,v=r[1]&&r[1].value,ts=+((r[2]&&r[2].value)||0);
+      if(!k||!(k in SYNC_SET))return;
+      _pushed[k]=v;
+      const localTs=SM[k]||0;
+      const localV=JSON.stringify(SYNC_GET[k]());
+      if(ts>localTs&&v!==localV){
+        try{SYNC_SET[k](JSON.parse(v));SM[k]=ts;applied++;}catch(e){}
+      }
+    });
+    if(applied){smSave();save();saveS2();rebuild();if(RENDER[S.view])RENDER[S.view]();noteBadge();
+      toast('Synced '+applied+' change set'+(applied>1?'s':'')+' from cloud');}
+    DB_OK=true;dbDot();
+    schedulePush(); // push anything local the cloud lacks
+  }catch(e){
+    DB_OK=(e.message==='no-turso')?null:false;dbDot();
+  }
+}
 
 // ═════════════ NAV ═════════════
 const TITLES={dashboard:['Overview','Dashboard'],networth:['Wealth','Net Worth'],cashflow:['Money In / Out','Cash Flow'],
@@ -1327,6 +1415,11 @@ function answer(q,raw){
   // set deepseek key
   let mk=raw.match(/set deepseek key\s+(sk-\S+)/i);
   if(mk){localStorage.setItem('wv_dskey',mk[1]);botSay('DeepSeek key saved — AI answers are now enabled.');return;}
+  // set turso creds
+  mk=raw.match(/set turso url\s+(\S+)/i);
+  if(mk){localStorage.setItem('wv_turso_url',mk[1]);botSay('Turso URL saved. Now: <span class="hl">set turso token …</span>');return;}
+  mk=raw.match(/set turso token\s+(\S+)/i);
+  if(mk){localStorage.setItem('wv_turso_token',mk[1]);botSay('Turso token saved — reloading sync…');cloudBoot();return;}
   // set finnhub key
   mk=raw.match(/set finnhub key\s+(\S+)/i);
   if(mk){localStorage.setItem('wv_fhkey',mk[1]);botSay('Finnhub key saved — stock/ETF search and live quotes enabled. Try <span class="hl">add holding AAPL 25</span>.');return;}
@@ -1643,18 +1736,19 @@ function xRun(){const l=runList();dl([['Vendor','Group','Charges','First','Last'
 rebuild();
 nav('dashboard');
 noteBadge();
+cloudBoot();
 </script>
 </body>
 </html>'''
 
-html = TEMPLATE.replace('__DATA__', data_json).replace('__BFKEY__', BFKEY).replace('__DSKEY__', DSKEY)
+html = TEMPLATE.replace('__DATA__', data_json).replace('__BFKEY__', BFKEY).replace('__DSKEY__', DSKEY).replace('__TURSOURL__', TURSOURL).replace('__TURSOTOK__', TURSOTOK)
 out = '/tmp/claude-0/-home-user-subbs/b079a466-7434-53d3-8f62-638a5f604b40/scratchpad/wealthview.html'
 with open(out, 'w') as f:
     f.write(html)
 print(f"Written {len(html)//1024}KB -> {out}")
 
 # Repo-safe copy (no API key)
-html_repo = TEMPLATE.replace('__DATA__', data_json).replace('__BFKEY__', '').replace('__DSKEY__', '')
+html_repo = TEMPLATE.replace('__DATA__', data_json).replace('__BFKEY__', '').replace('__DSKEY__', '').replace('__TURSOURL__', '').replace('__TURSOTOK__', '')
 with open('/tmp/claude-0/-home-user-subbs/b079a466-7434-53d3-8f62-638a5f604b40/scratchpad/wealthview-repo.html', 'w') as f:
     f.write(html_repo)
 print("Repo-safe copy written (no Brandfetch key)")
