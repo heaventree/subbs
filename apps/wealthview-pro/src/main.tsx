@@ -5,8 +5,10 @@ import { Shell } from './components/Shell'
 import { AuthGate } from './components/AuthGate'
 import { DashboardPage } from './pages/DashboardPage'
 import { LedgerPage } from './pages/LedgerPage'
+import { VendorsPage } from './pages/VendorsPage'
+import { ImportPage } from './pages/ImportPage'
 import { useApp } from './lib/store'
-import { loadData, type WvData } from './lib/data'
+import { loadData, invalidateCache, type WvData } from './lib/data'
 import { cloudPull, cloudPush } from './lib/turso'
 
 const TITLES: Record<string, [string, string]> = {
@@ -15,6 +17,7 @@ const TITLES: Record<string, [string, string]> = {
   vendors: ['Directory', 'Vendors'],
   subscriptions: ['Recurring', 'Subscriptions'],
   networth: ['Wealth', 'Net Worth'],
+  import: ['Data', 'Import'],
 }
 
 function App() {
@@ -37,6 +40,11 @@ function App() {
     })
   }, [])
 
+  function refreshAfterImport() {
+    invalidateCache()
+    loadData().then(setData).catch((e) => setErr(String(e)))
+  }
+
   const [sub, title] = TITLES[page] ?? ['', page]
   return (
     <Shell title={title} sub={sub}>
@@ -44,10 +52,12 @@ function App() {
       {!data && !err && <div className="p-8 text-muted text-sm animate-pulse">Loading ledger…</div>}
       {data && page === 'dashboard' && <DashboardPage data={data} />}
       {data && page === 'ledger' && <LedgerPage data={data} />}
-      {data && !['dashboard', 'ledger'].includes(page) && (
+      {data && page === 'vendors' && <VendorsPage data={data} />}
+      {data && page === 'import' && <ImportPage data={data} onImported={refreshAfterImport} />}
+      {data && !['dashboard', 'ledger', 'vendors', 'import'].includes(page) && (
         <div className="p-10 text-center text-muted text-sm">
           <div className="text-3xl mb-3 opacity-40">🏗</div>
-          {title} is being ported from the SPA — Dashboard and Ledger are live in Pro.
+          {title} is being ported from the SPA — Dashboard, Ledger, Vendors and Import are live in Pro.
         </div>
       )}
     </Shell>

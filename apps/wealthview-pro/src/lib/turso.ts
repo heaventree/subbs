@@ -6,9 +6,13 @@ const token = () => localStorage.getItem('wv_turso_token') || (import.meta.env.V
 
 export let dbStatus: 'unknown' | 'ok' | 'offline' = 'unknown'
 
-type Stmt = { sql: string; args?: (string | number)[] }
+export type Stmt = { sql: string; args?: (string | number)[] }
+export type Cell = { type: string; value?: string } | null
 
-async function tq(stmts: Stmt[]) {
+// Shared low-level pipeline call — the ledger module (src/lib/ledger.ts) reuses
+// this for its own tables so there is exactly one place that knows the Turso
+// HTTP wire format.
+export async function tq(stmts: Stmt[], timeoutMs = 15000): Promise<{ response?: { result?: { rows: Cell[][] } } }[]> {
   const u = url(), t = token()
   if (!u || !t) throw new Error('no-turso')
   const requests: unknown[] = stmts.map((x) => ({
@@ -24,7 +28,7 @@ async function tq(stmts: Stmt[]) {
   const r = await fetch(u.replace('libsql://', 'https://') + '/v2/pipeline', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + t, 'Content-Type': 'application/json' },
-    signal: AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined,
+    signal: AbortSignal.timeout ? AbortSignal.timeout(timeoutMs) : undefined,
     body: JSON.stringify({ requests }),
   })
   if (!r.ok) throw new Error('HTTP ' + r.status)
