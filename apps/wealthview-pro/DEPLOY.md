@@ -16,6 +16,28 @@
 | `AUTH_SECRET` | any long random string (session signing) |
 | `RESEND_API_KEY` | free key from resend.com (see below) |
 | `ALLOWED_EMAIL` | **required** — the only address allowed to log in. In Resend test mode this MUST be the same address your Resend account is registered with, or codes won't deliver |
+| `DEEPSEEK_KEY` | optional — injected into `/classic.html` at build time so the AI assistant works with no manual setup |
+| `BRANDFETCH_KEY` | optional — injected into `/classic.html` at build time for vendor logos |
+| `ALLOW_DEV_CODE` | optional, `1` — shows the login code on screen instead of emailing (testing only, remove after) |
+
+Set every variable to **"Same value in all deploy contexts"** — a
+value scoped to only one context (e.g. Deploy Previews) will be blank
+in Production and cause hard-to-diagnose failures.
+
+## Classic app key injection
+
+`/classic.html` (the full-featured single-file app) normally asks you to
+paste your Turso/DeepSeek/Brandfetch keys once via its Assistant
+(`set turso url …`, `set deepseek key …`). On Netlify, `scripts/inject-classic.mjs`
+runs after the Vite build and writes `TURSO_URL`, `TURSO_TOKEN`,
+`DEEPSEEK_KEY` and `BRANDFETCH_KEY` straight into the shipped HTML, so the
+deployed classic app works immediately with no setup step. Any key left
+unset in Netlify simply falls back to the in-browser "set … key" flow.
+
+**Trade-off:** these become part of the public static bundle, readable by
+anyone with the URL — acceptable for an unlisted personal deployment.
+Leave a key blank in Netlify if you'd rather keep it out of the bundle
+and set it manually per-browser instead.
 
 ## 3. Email codes (Resend, ~2 minutes)
 1. Sign up at resend.com **with the same email you'll log in with** (test-mode Resend only delivers to the account owner's address)

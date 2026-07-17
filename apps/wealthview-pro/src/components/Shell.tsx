@@ -1,4 +1,4 @@
-import { LayoutDashboard, List, Building2, RefreshCw, Landmark, Settings2 } from 'lucide-react'
+import { LayoutDashboard, List, Building2, RefreshCw, Landmark, Settings2, AppWindow } from 'lucide-react'
 import { useApp } from '../lib/store'
 import clsx from 'clsx'
 
@@ -29,6 +29,12 @@ export function Shell({ children, title, sub, actions }: {
         </div>
         <nav className="flex-1 p-3 space-y-0.5">
           <div className="text-[11px] font-semibold uppercase tracking-wider text-dimmed px-3 mb-2">Analytics</div>
+          <a href="/classic.html" target="_blank" rel="noopener"
+            className="w-full flex items-center gap-3 h-9 px-3 rounded-lg text-sm text-muted hover:bg-surface hover:text-ink transition-colors">
+            <AppWindow size={15} />
+            Classic (full app)
+            <span className="ml-auto text-[9px] font-semibold text-warn border border-warn/40 rounded px-1">ALL FEATURES</span>
+          </a>
           {NAV.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
