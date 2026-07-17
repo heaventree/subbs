@@ -1,0 +1,5 @@
+# CodeRabbit configuration
+# Suppress the "review skipped (draft)" status comment on draft PRs.
+# Reviews still run when a PR is marked ready-for-review.
+reviews:
+  review_status: false

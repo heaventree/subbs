@@ -3,28 +3,23 @@
 /**
  * Migration 0020 — BudgetBakers Wallet integration
  *
- * Creates three collections:
- *   bb_settings     — per-user connection credentials (token hidden)
- *   bb_transactions — cached transactions fetched from Wallet
- *   bb_detected     — recurring payments detected from transaction history
+ * Three-phase pattern (matches existing migrations):
+ *   Phase 1: Create collections without relations, permissive rules
+ *   Phase 2: Add relation fields (needs collectionId references)
+ *   Phase 3: Apply owner-scoped access rules
  */
 migrate(
   (app) => {
-    const users = app.findCollectionByNameOrId("users");
-    const subscriptions = app.findCollectionByNameOrId("subscriptions");
-    const ownerRule = "@request.auth.id = user.id";
+    const authOnly = "@request.auth.id != ''";
 
-    // ── bb_settings ──────────────────────────────────────────────────────────
-    const bbSettings = new Collection({
+    // ── Phase 1: bare collections ─────────────────────────────────────────────
+
+    app.save(new Collection({
       name: "bb_settings",
       type: "base",
-      listRule: ownerRule,
-      viewRule: ownerRule,
-      createRule: "@request.auth.id != ''",
-      updateRule: ownerRule,
-      deleteRule: ownerRule,
+      listRule: authOnly, viewRule: authOnly,
+      createRule: authOnly, updateRule: authOnly, deleteRule: authOnly,
       fields: [
-        new RelationField({ name: "user", collectionId: users.id, required: true, maxSelect: 1 }),
         new TextField({ name: "token", hidden: true }),
         new DateField({ name: "token_expires" }),
         new JSONField({ name: "selected_wallet_ids" }),
@@ -32,20 +27,14 @@ migrate(
         new BoolField({ name: "auto_sync" }),
         new BoolField({ name: "connected" }),
       ],
-    });
-    app.save(bbSettings);
+    }));
 
-    // ── bb_transactions ───────────────────────────────────────────────────────
-    const bbTransactions = new Collection({
+    app.save(new Collection({
       name: "bb_transactions",
       type: "base",
-      listRule: ownerRule,
-      viewRule: ownerRule,
-      createRule: null,
-      updateRule: null,
-      deleteRule: ownerRule,
+      listRule: authOnly, viewRule: authOnly,
+      createRule: null, updateRule: null, deleteRule: authOnly,
       fields: [
-        new RelationField({ name: "user", collectionId: users.id, required: true, maxSelect: 1 }),
         new TextField({ name: "bb_id", required: true }),
         new TextField({ name: "wallet_id" }),
         new TextField({ name: "wallet_name" }),
@@ -57,20 +46,14 @@ migrate(
         new TextField({ name: "currency_code" }),
         new TextField({ name: "payee" }),
       ],
-    });
-    app.save(bbTransactions);
+    }));
 
-    // ── bb_detected ───────────────────────────────────────────────────────────
-    const bbDetected = new Collection({
+    app.save(new Collection({
       name: "bb_detected",
       type: "base",
-      listRule: ownerRule,
-      viewRule: ownerRule,
-      createRule: null,
-      updateRule: ownerRule,
-      deleteRule: ownerRule,
+      listRule: authOnly, viewRule: authOnly,
+      createRule: null, updateRule: authOnly, deleteRule: authOnly,
       fields: [
-        new RelationField({ name: "user", collectionId: users.id, required: true, maxSelect: 1 }),
         new TextField({ name: "name" }),
         new TextField({ name: "normalized_name" }),
         new NumberField({ name: "amount" }),
@@ -86,15 +69,56 @@ migrate(
         }),
         new NumberField({ name: "transaction_count" }),
         new NumberField({ name: "confidence" }),
-        new RelationField({
-          name: "subscription",
-          collectionId: subscriptions.id,
-          required: false,
-          maxSelect: 1,
-        }),
         new JSONField({ name: "transaction_ids" }),
       ],
-    });
+    }));
+
+    // ── Phase 2: add relation fields ──────────────────────────────────────────
+
+    const users        = app.findCollectionByNameOrId("users");
+    const subscriptions = app.findCollectionByNameOrId("subscriptions");
+
+    const bbSettings     = app.findCollectionByNameOrId("bb_settings");
+    const bbTransactions = app.findCollectionByNameOrId("bb_transactions");
+    const bbDetected     = app.findCollectionByNameOrId("bb_detected");
+
+    bbSettings.fields.add(
+      new RelationField({ name: "user", collectionId: users.id, required: true, maxSelect: 1 })
+    );
+    app.save(bbSettings);
+
+    bbTransactions.fields.add(
+      new RelationField({ name: "user", collectionId: users.id, required: true, maxSelect: 1 })
+    );
+    app.save(bbTransactions);
+
+    bbDetected.fields.add(
+      new RelationField({ name: "user", collectionId: users.id, required: true, maxSelect: 1 })
+    );
+    bbDetected.fields.add(
+      new RelationField({ name: "subscription", collectionId: subscriptions.id, required: false, maxSelect: 1 })
+    );
+    app.save(bbDetected);
+
+    // ── Phase 3: tighten access rules ─────────────────────────────────────────
+
+    const ownerRule = "@request.auth.id = user.id";
+
+    bbSettings.listRule   = ownerRule;
+    bbSettings.viewRule   = ownerRule;
+    bbSettings.updateRule = ownerRule;
+    bbSettings.deleteRule = ownerRule;
+    app.save(bbSettings);
+
+    bbTransactions.listRule   = ownerRule;
+    bbTransactions.viewRule   = ownerRule;
+    bbTransactions.deleteRule = ownerRule;
+    app.save(bbTransactions);
+
+    bbDetected.listRule   = ownerRule;
+    bbDetected.viewRule   = ownerRule;
+    bbDetected.updateRule = ownerRule;
+    bbDetected.deleteRule = ownerRule;
     app.save(bbDetected);
   },
 
