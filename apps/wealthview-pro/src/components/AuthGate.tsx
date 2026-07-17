@@ -15,13 +15,24 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
 
+  // Classic (the full-featured app) is the primary landing experience —
+  // visiting "/" while already authenticated bounces there unless ?pro=1
+  // or ?return=... says otherwise. Pro stays reachable for anyone testing it.
+  function landAfterAuth() {
+    const params = new URLSearchParams(location.search)
+    const ret = params.get('return')
+    if (ret) { location.href = ret; return }
+    if (!params.has('pro')) { location.href = '/classic.html'; return }
+    setPhase('authed')
+  }
+
   useEffect(() => {
     if (DEV) return
     const t = localStorage.getItem(TOKEN_KEY)
     if (!t) { setPhase('email'); return }
     fetch('/api/auth/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: t }) })
       .then((r) => r.json())
-      .then((j) => setPhase(j.ok ? 'authed' : 'email'))
+      .then((j) => (j.ok ? landAfterAuth() : setPhase('email')))
       .catch(() => setPhase('email'))
   }, [])
 
@@ -44,7 +55,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       const j = await r.json()
       if (!r.ok || !j.token) throw new Error(j.error || 'verify failed')
       localStorage.setItem(TOKEN_KEY, j.token)
-      setPhase('authed')
+      landAfterAuth()
     } catch (e) { setMsg(String((e as Error).message)) }
     setBusy(false)
   }

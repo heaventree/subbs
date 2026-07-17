@@ -7,6 +7,7 @@ import { DashboardPage } from './pages/DashboardPage'
 import { LedgerPage } from './pages/LedgerPage'
 import { VendorsPage } from './pages/VendorsPage'
 import { ImportPage } from './pages/ImportPage'
+import { ExportPage } from './pages/ExportPage'
 import { useApp } from './lib/store'
 import { loadData, invalidateCache, type WvData } from './lib/data'
 import { cloudPull, cloudPush } from './lib/turso'
@@ -18,6 +19,7 @@ const TITLES: Record<string, [string, string]> = {
   subscriptions: ['Recurring', 'Subscriptions'],
   networth: ['Wealth', 'Net Worth'],
   import: ['Data', 'Import'],
+  export: ['Data', 'Export / Backup'],
 }
 
 function App() {
@@ -54,10 +56,11 @@ function App() {
       {data && page === 'ledger' && <LedgerPage data={data} />}
       {data && page === 'vendors' && <VendorsPage data={data} />}
       {data && page === 'import' && <ImportPage data={data} onImported={refreshAfterImport} />}
-      {data && !['dashboard', 'ledger', 'vendors', 'import'].includes(page) && (
+      {data && page === 'export' && <ExportPage data={data} />}
+      {data && !['dashboard', 'ledger', 'vendors', 'import', 'export'].includes(page) && (
         <div className="p-10 text-center text-muted text-sm">
           <div className="text-3xl mb-3 opacity-40">🏗</div>
-          {title} is being ported from the SPA — Dashboard, Ledger, Vendors and Import are live in Pro.
+          {title} is being ported from the SPA — Dashboard, Ledger, Vendors, Import and Export are live in Pro.
         </div>
       )}
     </Shell>

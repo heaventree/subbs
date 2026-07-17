@@ -1,4 +1,4 @@
-import { LayoutDashboard, List, Building2, RefreshCw, Landmark, Settings2, AppWindow, UploadCloud } from 'lucide-react'
+import { LayoutDashboard, List, Building2, RefreshCw, Landmark, Settings2, AppWindow, UploadCloud, DownloadCloud } from 'lucide-react'
 import { useApp } from '../lib/store'
 import clsx from 'clsx'
 
@@ -12,6 +12,7 @@ const NAV = [
 
 const DATA_NAV = [
   { id: 'import', label: 'Import', icon: UploadCloud },
+  { id: 'export', label: 'Export / Backup', icon: DownloadCloud },
 ]
 
 export function Shell({ children, title, sub, actions }: {
