@@ -74,6 +74,7 @@ html,body{height:100%;overflow:hidden;background:var(--canvas);color:var(--text)
 .b-cancelled{background:rgba(239,68,68,.12);color:var(--expense-t)}.b-cancelled .bdot{background:var(--expense-t)}
 .b-paused{background:rgba(99,102,241,.12);color:var(--accent-h)}.b-paused .bdot{background:var(--accent-h)}
 .b-lapsed{background:rgba(91,99,115,.2);color:var(--dimmed)}.b-lapsed .bdot{background:var(--dimmed)}
+.b-completed{background:rgba(6,182,212,.12);color:#22D3EE}.b-completed .bdot{background:#22D3EE}
 .b-cycle{background:var(--accent-12);color:var(--accent-h);border-radius:6px}
 .av{display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;overflow:hidden}
 .av img{width:100%;height:100%;object-fit:contain;padding:3px}
@@ -220,7 +221,7 @@ select.form-in{cursor:pointer}
       <div class="nav-item" data-v="asst" onclick="nav('asst')"><span class="ni">&#10022;</span>Assistant</div>
       <div class="nav-item" data-v="notes" onclick="nav('notes')"><span class="ni">&#9998;</span>Dev Notes <span id="nb-ct" style="margin-left:auto;font-size:10.5px;background:var(--accent-12);color:var(--accent-h);border-radius:99px;padding:1px 7px"></span></div>
     </nav>
-    <div class="sb-user"><div class="sb-user-in"><div class="av-user">SO</div><div style="min-width:0"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Sean O&#39;Byrne</div><div style="font-size:11px;color:var(--muted)">Heaventree Ltd. · <span style="color:var(--accent-h)">build 17.07-holdings</span></div></div></div></div>
+    <div class="sb-user"><div class="sb-user-in"><div class="av-user">SO</div><div style="min-width:0"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Sean O&#39;Byrne</div><div style="font-size:11px;color:var(--muted)">Heaventree Ltd. · <span style="color:var(--accent-h)">build 17.07-b</span></div></div></div></div>
   </aside>
   <div id="main">
     <div class="topbar">
@@ -268,7 +269,7 @@ const LOGOC={};
 // Expand compact tx: [date, vendorIdx, amount, catIdx, type, recurring]
 const V=RAW.vendors, CATS=RAW.cats, GROUPS=RAW.groups, RAWS=RAW.raws||[];
 const GC={}; GROUPS.forEach(g=>GC[g.name]=g.color);
-const TX=RAW.tx.map(t=>({d:t[0],v:t[1],a:t[2],c:t[3],t:t[4],r:t[5]===1,w:t[6],ve:t[1],
+const TX=RAW.tx.map(t=>({d:t[0],v:t[1],a:t[2],c:t[3],t:t[4],t0:t[4],r:t[5]===1,w:t[6],ve:t[1],
   get vendor(){return V[this.ve]},get cat(){return CATS[this.c]}}));
 V.forEach((v,i)=>{v.idx=i;v.color=GC[v.group]||'#6B7280';});
 
@@ -292,7 +293,15 @@ function rebuild(){
     v.absorbed=!!S2.merges[v.id];
   });
   Object.keys(VTX).forEach(k=>delete VTX[k]);
-  TX.forEach((t,i)=>{t.ve=resolveIdx(t.v);(VTX[t.ve]=VTX[t.ve]||[]).push(i);});
+  TX.forEach((t,i)=>{
+    t.ve=resolveIdx(t.v);
+    const ov=S.typeOv&&S.typeOv[V[t.ve].id];
+    t.t=(ov&&t.t0!=='x')?ov:t.t0;             // income⇄expense fix follows the vendor
+    (VTX[t.ve]=VTX[t.ve]||[]).push(i);
+  });
+  // monthly series follows the corrected types
+  MONTHS.forEach(m=>{MSER[m]={inc:0,exp:0,xfer:0};});
+  TX.forEach(t=>{const m=MSER[t.d.slice(0,7)];if(!m)return;if(t.t==='i')m.inc+=t.a;else if(t.t==='x')m.xfer+=t.a;else m.exp+=t.a;});
   V.forEach(v=>{
     const ids=VTX[v.idx]||[];
     if(v.absorbed){v.count=0;v.total=0;return;}
@@ -306,7 +315,7 @@ function rebuild(){
       const sy=+first.slice(0,4),sm=+first.slice(5,7),ey=+last.slice(0,4),em=+last.slice(5,7);
       v.spanMonths=(ey-sy)*12+(em-sm)+1;
       v.avgMonthly=Math.round(total/v.spanMonths*100)/100;
-      v.type=hasI?'i':(hasE?'e':(hasX?'x':v.type));
+      v.type=S.typeOv[v.id]||(hasI?'i':(hasE?'e':(hasX?'x':v.type)));
       v.recurCt=recurCt;v.recurring=recurCt>0;
     }
   });
@@ -330,7 +339,8 @@ const S={view:'dashboard',range:12,vSearch:'',vType:'e',vSort:'total',
   rules:JSON.parse(localStorage.getItem('wv_rules')||'[]'),
   assets:JSON.parse(localStorage.getItem('wv_assets')||'[]'),
   holdings:JSON.parse(localStorage.getItem('wv_holdings')||'[]'),
-  notes:JSON.parse(localStorage.getItem('wv_notes')||'[]'),   // {id,text,view,sev,status,at}  // {id,ticker,name,shares,ccy,price,priceAt,src}
+  notes:JSON.parse(localStorage.getItem('wv_notes')||'[]'),   // {id,text,view,sev,status,at}
+  typeOv:JSON.parse(localStorage.getItem('wv_typeov')||'{}'),  // vendorId -> 'i'|'e' (fix jumbled income/expense)  // {id,ticker,name,shares,ccy,price,priceAt,src}
   fx:JSON.parse(localStorage.getItem('wv_fx')||'{}'),              // {USD:0.92,...} to EUR
   nwHist:JSON.parse(localStorage.getItem('wv_nwhist')||'[]'),
   rSearch:'',rGroup:'',rMin:3,rSort:'avg',rDir:-1,
@@ -340,7 +350,7 @@ const S={view:'dashboard',range:12,vSearch:'',vType:'e',vSort:'total',
   tSearch:'',tType:'all',tGroup:'',tCat:'',tYear:'',tMin:'',tMax:'',tRec:'',tPage:1,tSort:'d',tDir:-1,
   cfYear:'',
 };
-function save(){['ov','rec','rules','assets','nwHist','owner','holdings','fx','notes'].forEach(k=>localStorage.setItem('wv_'+(k==='nwHist'?'nwhist':k),JSON.stringify(S[k])));localStorage.setItem('wv_amtmode',S.amtMode);}
+function save(){['ov','rec','rules','assets','nwHist','owner','holdings','fx','notes','typeOv'].forEach(k=>localStorage.setItem('wv_'+(k==='nwHist'?'nwhist':k==='typeOv'?'typeov':k),JSON.stringify(S[k])));localStorage.setItem('wv_amtmode',S.amtMode);}
 
 // ═════════════ HELPERS ═════════════
 const fmt=n=>new Intl.NumberFormat('en-IE',{style:'currency',currency:'EUR',minimumFractionDigits:2}).format(n);
@@ -348,21 +358,36 @@ const fmt0=n=>new Intl.NumberFormat('en-IE',{style:'currency',currency:'EUR',max
 const fmtD=s=>{if(!s)return'—';const d=new Date(s+'T00:00:00');return d.toLocaleDateString('en-IE',{day:'2-digit',month:'short',year:'2-digit'})};
 const fmtM=m=>{const d=new Date(m+'-15');return d.toLocaleDateString('en-IE',{month:'short',year:'2-digit'})};
 const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+let _dt=null;
+function deb(fn,fid){clearTimeout(_dt);_dt=setTimeout(()=>{fn();const e=fid&&document.getElementById(fid);
+  if(e){e.focus();try{const l=e.value.length;e.setSelectionRange(l,l);}catch(x){}}},240);}
 function toast(m,c){const e=document.getElementById('toast');e.innerHTML=`<span style="color:${c||'#34D399'}">&#9679;</span> ${m}`;e.classList.add('show');clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove('show'),2600);}
 
 // A subscription = a regular recurring OUTGOING, not just anything the bank
 // flagged. Definition: an expense vendor charged in >=3 distinct months AND
 // present in >=40% of the months since its first charge (steady cadence).
 // Manual/rule overrides in S.rec always win, so you keep full control.
+// Groups where a monthly cadence really means a service contract
+const SUB_GROUPS=new Set(['AI & Software','Hosting & Domains','Home & Utilities',
+  'Insurance & Loans','Business Ops','Education']);
+// How steady the monthly amount is: 1 = identical every month, 0 = chaotic
+function amtSteadiness(v){
+  const per={};(VTX[v.idx]||[]).forEach(i=>{const t=TX[i];if(t.t!=='e')return;const m=t.d.slice(0,7);per[m]=(per[m]||0)+t.a;});
+  const vals=Object.values(per);if(vals.length<3)return 0;
+  const mean=vals.reduce((a,b)=>a+b,0)/vals.length;if(!mean)return 0;
+  const sd=Math.sqrt(vals.reduce((a,b)=>a+(b-mean)*(b-mean),0)/vals.length);
+  return Math.max(0,1-sd/mean);
+}
 function detectSub(v){
   if(v.type!=='e') return false;
   if(v.activeMonths<3) return false;
   if(!(v.avgMonthly>0)) return false;
   const coverage = v.activeMonths/Math.max(v.spanMonths,1);   // present most months
   const perMonth = v.count/v.activeMonths;                    // ~1 charge/month = a bill
-  // A subscription bills roughly monthly. Groceries / Amazon fire many times a
-  // month (high perMonth) — exclude them. "Monthly outgoing", per your rule.
-  return coverage>=0.4 && perMonth<=1.6;
+  if(coverage<0.4||perMonth>1.6) return false;
+  // Frequent-but-organic spending (vet, restaurants, fuel) isn't a contract:
+  // require either a service-type group OR a steady billed amount.
+  return SUB_GROUPS.has(v.group) || amtSteadiness(v)>=0.65;
 }
 function isRecurring(v){ if(S.rec[v.id]!==undefined)return S.rec[v.id]; return detectSub(v); }
 // Most recent expense charge for a vendor (TX is sorted newest-first)
@@ -462,7 +487,7 @@ RENDER.dashboard=function(){
   const inc3=sum(compl,m=>MSER[m].inc)/compl.length;
   const cur=MSER[CURM];
   const nw=nwTotal();
-  const recV=V.filter(v=>v.type==='e'&&isRecurring(v)&&vStatus(v)!=='lapsed'&&vStatus(v)!=='cancelled');
+  const recV=V.filter(v=>v.type==='e'&&isRecurring(v)&&!['lapsed','cancelled','completed'].includes(vStatus(v)));
   const recMo=sum(recV,v=>subCost(v));
 
   const maxB=Math.max(...mo.map(m=>Math.max(MSER[m].inc,MSER[m].exp)));
@@ -746,11 +771,13 @@ function runList(){
   if(S.rSearch){const q=S.rSearch.toLowerCase();l=l.filter(v=>v.name.toLowerCase().includes(q)||v.group.toLowerCase().includes(q));}
   if(S.rGroup)l=l.filter(v=>v.group===S.rGroup);
   if(S.rOwner)l=l.filter(v=>S.rOwner==='unassigned'?!ownerOf(v):ownerOf(v)===S.rOwner);
-  const key={avg:v=>v.avgMonthly,total:v=>v.total,count:v=>v.count,last:v=>v.last,name:v=>v.name};
+  const key={avg:v=>v.avgMonthly,total:v=>v.total,count:v=>v.count,last:v=>v.last,name:v=>v.name.toLowerCase(),typ:v=>typical(v)};
   const f=key[S.rSort]||key.avg;
   l.sort((a,b)=>{const x=f(a),y=f(b);return(x<y?-1:x>y?1:0)*S.rDir;});
   return l;
 }
+function rsort(k){if(S.rSort===k)S.rDir*=-1;else{S.rSort=k;S.rDir=k==='name'?1:-1;}RENDER.running();}
+function rarr(k){return S.rSort===k?(S.rDir===-1?' &#9662;':' &#9652;'):'';}
 RENDER.running=function(){
   const el=document.getElementById('view-running');
   const l=runList();
@@ -778,7 +805,7 @@ RENDER.running=function(){
   <div class="kpi"><div class="kpi-l">Combined avg</div><div class="kpi-v mono">${fmt0(sum(l,v=>v.avgMonthly))}/mo</div><div class="kpi-s">sum of listed vendor averages</div></div>
 </div>
 <div class="filter-bar">
-  <div class="srch"><span class="si">&#128269;</span><input placeholder="Search vendors…" value="${esc(S.rSearch)}" oninput="S.rSearch=this.value;RENDER.running()"></div>
+  <div class="srch"><span class="si">&#128269;</span><input id="srch-run" placeholder="Search vendors…" value="${esc(S.rSearch)}" oninput="S.rSearch=this.value;deb(RENDER.running,'srch-run')"></div>
   <select class="flt" onchange="S.rGroup=this.value;RENDER.running()"><option value="">All groups</option>${groups.map(g=>`<option ${S.rGroup===g?'selected':''}>${g}</option>`).join('')}</select>
   <select class="flt" onchange="S.rOwner=this.value;RENDER.running()"><option value="">All owners</option><option value="heaventree"${S.rOwner==='heaventree'?' selected':''}>Heaventree</option><option value="personal"${S.rOwner==='personal'?' selected':''}>Personal</option><option value="unassigned"${S.rOwner==='unassigned'?' selected':''}>Unassigned</option></select>
   <select class="flt" onchange="S.rMin=+this.value;RENDER.running()"><option value="1"${S.rMin===1?' selected':''}>Min 1 charge</option><option value="2"${S.rMin===2?' selected':''}>Min 2</option><option value="3"${S.rMin===3?' selected':''}>Min 3</option><option value="6"${S.rMin===6?' selected':''}>Min 6</option><option value="12"${S.rMin===12?' selected':''}>Min 12</option></select>
@@ -788,7 +815,13 @@ RENDER.running=function(){
     <option value="name:1"${S.rSort==='name'?' selected':''}>Name A&#8211;Z</option></select>
   <span class="res-ct">${l.length} vendors${l.length>300?' (showing 300)':''}</span>
 </div>
-<table class="tbl"><thead><tr><th>Vendor</th><th>Type</th><th>Charges</th><th>Active period</th><th>Avg / month</th><th>Typical / mo</th><th>Lifetime</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+<table class="tbl"><thead><tr>
+<th onclick="rsort('name')">Vendor${rarr('name')}</th><th>Type</th>
+<th onclick="rsort('count')">Charges${rarr('count')}</th><th>Active period</th>
+<th onclick="rsort('avg')">Avg / month${rarr('avg')}</th>
+<th onclick="rsort('typ')">Typical / mo${rarr('typ')}</th>
+<th onclick="rsort('total')">Lifetime${rarr('total')}</th>
+<th onclick="rsort('last')">Status${rarr('last')}</th></tr></thead><tbody>${rows}</tbody></table>`;
   loadLogos('rv',l.slice(0,300));
 };
 
@@ -822,6 +855,7 @@ RENDER.subs=function(){
   <div class="status-menu"><div class="status-btn badge b-${st}" onclick="event.stopPropagation();togSM('${v.id}')"><span class="bdot"></span>${st} &#9662;</div>
     <div class="status-dd" id="sm_${v.id}" style="display:none">
       ${['active','review','paused','cancelled'].map(s=>`<div class="opt" onclick="setSt('${v.id}','${s}')"><span style="color:var(--${s==='active'?'income-t':s==='review'?'warn':s==='paused'?'accent-h':'expense-t'})">&#9679;</span> ${s.charAt(0).toUpperCase()+s.slice(1)}</div>`).join('')}
+      <div class="opt" onclick="setSt('${v.id}','completed')"><span style="color:#22D3EE">&#10003;</span> Completed <span style="font-size:10px;color:var(--dimmed)">(loan/term ended)</span></div>
       <div class="opt" style="border-top:1px solid var(--border);margin-top:3px;padding-top:8px" onclick="setRec('${v.id}',false)"><span style="color:var(--dimmed)">&#8856;</span> Not recurring</div>
     </div></div>
 </div>
@@ -847,9 +881,9 @@ RENDER.subs=function(){
   <span>Showing regular monthly outgoings — expense vendors charged in 3+ months with steady cadence. Something wrong? Change any card's status, or set a <span style="color:var(--accent-h);cursor:pointer" onclick="nav('rules')">rule</span> to control what counts.</span>
 </div>
 <div class="filter-bar">
-  <div class="srch"><span class="si">&#128269;</span><input placeholder="Search…" value="${esc(S.sSearch)}" oninput="S.sSearch=this.value;RENDER.subs()"></div>
+  <div class="srch"><span class="si">&#128269;</span><input id="srch-subs" placeholder="Search…" value="${esc(S.sSearch)}" oninput="S.sSearch=this.value;deb(RENDER.subs,'srch-subs')"></div>
   <select class="flt" onchange="S.sGroup=this.value;RENDER.subs()"><option value="">All groups</option>${groups.map(g=>`<option ${S.sGroup===g?'selected':''}>${g}</option>`).join('')}</select>
-  <select class="flt" onchange="S.sStatus=this.value;RENDER.subs()"><option value="">All statuses</option>${['active','review','paused','cancelled','lapsed'].map(s=>`<option ${S.sStatus===s?'selected':''}>${s}</option>`).join('')}</select>
+  <select class="flt" onchange="S.sStatus=this.value;RENDER.subs()"><option value="">All statuses</option>${['active','review','paused','cancelled','completed','lapsed'].map(s=>`<option ${S.sStatus===s?'selected':''}>${s}</option>`).join('')}</select>
   <select class="flt" onchange="S.sOwner=this.value;RENDER.subs()"><option value="">All owners</option><option value="heaventree"${S.sOwner==='heaventree'?' selected':''}>Heaventree</option><option value="personal"${S.sOwner==='personal'?' selected':''}>Personal</option><option value="unassigned"${S.sOwner==='unassigned'?' selected':''}>Unassigned</option></select>
   <select class="flt" onchange="S.sSort=this.value;RENDER.subs()"><option value="cost"${S.sSort==='cost'?' selected':''}>Sort: cost/mo</option><option value="name"${S.sSort==='name'?' selected':''}>Sort: name</option><option value="last"${S.sSort==='last'?' selected':''}>Sort: last charge</option></select>
   <div class="seg" title="How to price variable bills"><button class="${S.amtMode==='last'?'active':''}" onclick="S.amtMode='last';save();RENDER.subs()">Last payment</button><button class="${S.amtMode==='typical'?'active':''}" onclick="S.amtMode='typical';save();RENDER.subs()">Average</button></div>
@@ -871,7 +905,8 @@ RENDER.vendors=function(){
   if(S.vSearch){const q=S.vSearch.toLowerCase();l=l.filter(v=>v.name.toLowerCase().includes(q)||(v.origName||'').toLowerCase().includes(q));}
   const key={total:v=>v.total,count:v=>v.count,last:v=>v.last,name:v=>v.name.toLowerCase(),typ:v=>typical(v)};
   const f=key[S.vSort]||key.total;
-  l.sort((a,b)=>{const x=f(a),y=f(b);return S.vSort==='name'?(x<y?-1:1):(y<x?-1:y>x?1:0);});
+  const dir=S.vDir||(S.vSort==='name'?1:-1);
+  l.sort((a,b)=>{const x=f(a),y=f(b);return (x<y?-1:x>y?1:0)*dir;});
   const mergeCt=Object.keys(S2.merges).length,renameCt=Object.keys(S2.names).length;
   const rows=l.slice(0,400).map(v=>{
     const streams=new Set();(VTX[v.idx]||[]).forEach(i=>streams.add(TX[i].w));
@@ -885,7 +920,7 @@ RENDER.vendors=function(){
 <td class="mono" style="font-size:12.5px;font-weight:600">${fmt0(v.total)}</td>
 <td class="mono" style="font-size:12px;color:var(--warn)">${v.type==='e'?fmt(typical(v)):'—'}</td>
 <td>${ownerChips(v)}</td>
-<td style="white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();renameModal(${v.idx})" title="Rename">&#9998;</button><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();mergeModal(${v.idx})" title="Merge into another vendor">&#8888;</button></td></tr>`;
+<td style="white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();renameModal(${v.idx})" title="Rename">&#9998;</button><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();mergeModal(${v.idx})" title="Merge into another vendor">&#8888;</button>${v.type!=='x'?`<button class="btn btn-ghost btn-sm" style="font-size:10px" title="${v.type==='i'?'Reclassify as EXPENSE (vendor)':'Reclassify as INCOME (client)'}" onclick="event.stopPropagation();setVType('${v.id}','${v.type==='i'?'e':'i'}')">&#8645; ${v.type==='i'?'to exp':'to inc'}</button>`:''}</td></tr>`;
   }).join('');
   const mergedList=Object.entries(S2.merges).map(([from,to])=>{
     const fv=V[VBYID[from]],tv=V[VBYID[to]];if(!fv||!tv)return'';
@@ -893,15 +928,23 @@ RENDER.vendors=function(){
   }).join('');
   el.innerHTML=`
 <div class="filter-bar">
-  <div class="srch" style="flex:1;max-width:300px"><span class="si">&#128269;</span><input placeholder="Search vendors (incl. original names)…" value="${esc(S.vSearch)}" oninput="S.vSearch=this.value;RENDER.vendors()"></div>
+  <div class="srch" style="flex:1;max-width:300px"><span class="si">&#128269;</span><input id="srch-ven" placeholder="Search vendors (incl. original names)…" value="${esc(S.vSearch)}" oninput="S.vSearch=this.value;deb(RENDER.vendors,'srch-ven')"></div>
   <div class="seg"><button class="${S.vType==='e'?'active':''}" onclick="S.vType='e';RENDER.vendors()">Expense</button><button class="${S.vType==='i'?'active':''}" onclick="S.vType='i';RENDER.vendors()">Income</button><button class="${S.vType==='x'?'active':''}" onclick="S.vType='x';RENDER.vendors()">Transfers</button><button class="${S.vType==='all'?'active':''}" onclick="S.vType='all';RENDER.vendors()">All</button></div>
   <select class="flt" onchange="S.vSort=this.value;RENDER.vendors()"><option value="total"${S.vSort==='total'?' selected':''}>Sort: lifetime</option><option value="typ"${S.vSort==='typ'?' selected':''}>Sort: typical/mo</option><option value="count"${S.vSort==='count'?' selected':''}>Sort: charges</option><option value="last"${S.vSort==='last'?' selected':''}>Sort: recent</option><option value="name"${S.vSort==='name'?' selected':''}>Sort: A&#8211;Z</option></select>
   <span class="res-ct">${l.length} vendors${l.length>400?' (showing 400)':''} · ${renameCt} renamed · ${mergeCt} merged</span>
 </div>
-<table class="tbl"><thead><tr><th>Vendor</th><th>Type</th><th>Charges</th><th>Last</th><th>Lifetime</th><th>Typical/mo</th><th>Owner</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+<table class="tbl"><thead><tr>
+<th onclick="vsort('name')">Vendor${varr('name')}</th><th>Type</th>
+<th onclick="vsort('count')">Charges${varr('count')}</th>
+<th onclick="vsort('last')">Last${varr('last')}</th>
+<th onclick="vsort('total')">Lifetime${varr('total')}</th>
+<th onclick="vsort('typ')">Typical/mo${varr('typ')}</th><th>Owner</th><th></th></tr></thead><tbody>${rows}</tbody></table>
 ${mergedList?`<div style="margin-top:22px;max-width:560px"><div class="sec-hdr"><div class="sec-t">Merged vendors (${mergeCt})</div></div><div class="card">${mergedList}</div></div>`:''}`;
   loadLogos('vd',l.slice(0,400));
 };
+function vsort(k){if(S.vSort===k)S.vDir=(S.vDir||-1)*-1;else{S.vSort=k;S.vDir=k==='name'?1:-1;}RENDER.vendors();}
+function varr(k){return S.vSort===k?((S.vDir||-1)===-1?' &#9662;':' &#9652;'):'';}
+function setVType(id,ty){S.typeOv[id]=ty;save();rebuild();RENDER[S.view]();toast('Reclassified — stats updated');}
 function renameModal(idx){
   const v=V[idx];
   openModal(`<div class="modal-hd"><div class="sec-t">Rename vendor</div><button class="modal-x" onclick="closeModal()">&#10005;</button></div>
@@ -984,15 +1027,15 @@ RENDER.tx=function(){
   const pag=pc>1?`<div class="pgn"><button class="pg-b" onclick="tp(${S.tPage-1})" ${S.tPage<=1?'disabled':''}>&#171;</button>${pgBtns(S.tPage,pc)}<button class="pg-b" onclick="tp(${S.tPage+1})" ${S.tPage>=pc?'disabled':''}>&#187;</button></div>`:'';
   el.innerHTML=`
 <div class="filter-bar">
-  <div class="srch" style="flex:1;max-width:280px"><span class="si">&#128269;</span><input placeholder="Search payee or category…" value="${esc(S.tSearch)}" oninput="S.tSearch=this.value;S.tPage=1;RENDER.tx()"></div>
+  <div class="srch" style="flex:1;max-width:280px"><span class="si">&#128269;</span><input id="srch-tx" placeholder="Search payee or category…" value="${esc(S.tSearch)}" oninput="S.tSearch=this.value;S.tPage=1;deb(RENDER.tx,'srch-tx')"></div>
   <div class="seg"><button class="${S.tType==='all'?'active':''}" onclick="S.tType='all';S.tPage=1;RENDER.tx()">All</button><button class="${S.tType==='expense'?'active':''}" onclick="S.tType='expense';S.tPage=1;RENDER.tx()">Out</button><button class="${S.tType==='income'?'active':''}" onclick="S.tType='income';S.tPage=1;RENDER.tx()">In</button><button class="${S.tType==='transfer'?'active':''}" onclick="S.tType='transfer';S.tPage=1;RENDER.tx()">Transfers</button></div>
   <select class="flt" onchange="S.tGroup=this.value;S.tCat='';S.tPage=1;RENDER.tx()"><option value="">All groups</option>${groups.map(g=>`<option ${S.tGroup===g?'selected':''}>${g}</option>`).join('')}</select>
   <select class="flt" onchange="S.tCat=this.value;S.tPage=1;RENDER.tx()"><option value="">All categories</option>${[...new Set(catsIn.map(c=>c.name))].sort().map(c=>`<option ${S.tCat===c?'selected':''}>${c}</option>`).join('')}</select>
   <select class="flt" onchange="S.tYear=this.value;S.tPage=1;RENDER.tx()"><option value="">All years</option>${years.map(y=>`<option ${S.tYear===y?'selected':''}>${y}</option>`).join('')}</select>
   <select class="flt" onchange="S.tRec=this.value;S.tPage=1;RENDER.tx()"><option value="">Rec + one-off</option><option value="rec"${S.tRec==='rec'?' selected':''}>Recurring only</option><option value="one"${S.tRec==='one'?' selected':''}>One-off only</option></select>
   <select class="flt" onchange="S.tOwner=this.value;S.tPage=1;RENDER.tx()"><option value="">All owners</option><option value="heaventree"${S.tOwner==='heaventree'?' selected':''}>Heaventree</option><option value="personal"${S.tOwner==='personal'?' selected':''}>Personal</option><option value="unassigned"${S.tOwner==='unassigned'?' selected':''}>Unassigned</option></select>
-  <input class="flt-n" type="number" placeholder="Min €" value="${S.tMin}" oninput="S.tMin=this.value;S.tPage=1;RENDER.tx()">
-  <input class="flt-n" type="number" placeholder="Max €" value="${S.tMax}" oninput="S.tMax=this.value;S.tPage=1;RENDER.tx()">
+  <input id="tmin" class="flt-n" type="number" placeholder="Min €" value="${S.tMin}" oninput="S.tMin=this.value;S.tPage=1;deb(RENDER.tx,'tmin')">
+  <input id="tmax" class="flt-n" type="number" placeholder="Max €" value="${S.tMax}" oninput="S.tMax=this.value;S.tPage=1;deb(RENDER.tx,'tmax')">
   <span class="res-ct">${l.length.toLocaleString()} tx · in <span style="color:var(--income-t)">${fmt0(ti)}</span> · out <span style="color:var(--expense-t)">${fmt0(te)}</span></span>
 </div>
 <table class="tbl"><thead><tr>
@@ -1073,7 +1116,7 @@ ${(function(){
 })()}
 <div style="display:flex;gap:8px;margin-bottom:6px">
   <button class="btn btn-sm ${rec?'btn-sec':'btn-primary'}" onclick="setRec('${v.id}',${!rec});vendorModal(${idx})">${rec?'&#8856; Mark not recurring':'&#8635; Mark as recurring'}</button>
-  ${['active','review','cancelled'].map(s=>`<button class="btn btn-sm btn-sec" onclick="setSt('${v.id}','${s}');vendorModal(${idx})">Set ${s}</button>`).join('')}
+  ${['active','review','cancelled','completed'].map(s=>`<button class="btn btn-sm btn-sec" onclick="setSt('${v.id}','${s}');vendorModal(${idx})">Set ${s}</button>`).join('')}
 </div>
 <div style="font-size:11px;color:var(--dimmed);margin:10px 0 2px">Monthly spend · last 24 months</div>
 <div class="spark">${spark}</div>
@@ -1132,7 +1175,7 @@ RENDER.ltd=function(){
   <div class="chart-card" style="display:flex;flex-direction:column">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
       <div style="flex:1"><div class="sec-t">All Lifetime Deals</div><div class="sec-s">One-off payments, lifetime products — kept out of the monthly burn figures</div></div>
-      <div class="srch"><span class="si">&#128269;</span><input placeholder="Search deals…" value="${esc(LTD_Q)}" oninput="LTD_Q=this.value;RENDER.ltd()"></div>
+      <div class="srch"><span class="si">&#128269;</span><input id="srch-ltd" placeholder="Search deals…" value="${esc(LTD_Q)}" oninput="LTD_Q=this.value;deb(RENDER.ltd,'srch-ltd')"></div>
     </div>
     <div style="overflow-y:auto;max-height:52vh">
     <table class="tbl"><thead><tr>
@@ -1435,6 +1478,7 @@ function aiDigest(){
 async function aiCall(messages,model){
   const r=await fetch('https://api.deepseek.com/chat/completions',{
     method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+DSKEY()},
+    signal:(AbortSignal&&AbortSignal.timeout)?AbortSignal.timeout(model==='deepseek-reasoner'?180000:90000):undefined,
     body:JSON.stringify({model:model||'deepseek-chat',messages,max_tokens:1200,temperature:0.2})});
   if(r.status===401)throw new Error('KEY');
   if(!r.ok)throw new Error('HTTP '+r.status);
@@ -1462,7 +1506,9 @@ async function aiAsk(question){
   }catch(e){
     w.innerHTML=e.message==='KEY'
       ?'&#9888; DeepSeek rejected the key. Update it with <span class="hl">set deepseek key sk-…</span>'
-      :`&#9888; Couldn't reach DeepSeek (${esc(e.message)}). This works when the app runs from your own PC (saved HTML file); the claude.ai artifact viewer blocks outside calls.`;
+      :(e.name==='TimeoutError'||/timeout/i.test(e.message||''))
+        ?'&#9888; DeepSeek timed out (90s). Try again — or the network/CORS is blocking it. Check the browser console (F12) and paste any red error to the dev chat.'
+        :`&#9888; Couldn't reach DeepSeek (${esc(e.message||e.name)}). Run via http://localhost (run-wealthview.bat), not file:// — and check F12 console for the exact error.`;
   }
   log.scrollTop=log.scrollHeight;
 }
@@ -1482,7 +1528,9 @@ async function aiAnomalies(){
   }catch(e){
     w.innerHTML=e.message==='KEY'
       ?'&#9888; DeepSeek rejected the key.'
-      :`&#9888; Couldn't reach DeepSeek (${esc(e.message)}). Run the saved HTML from your PC — the artifact viewer blocks outside calls.`;
+      :(e.name==='TimeoutError'||/timeout/i.test(e.message||''))
+        ?'&#9888; Deep scan timed out (3 min) — the reasoning model can be slow at peak. Try again, or ask the question in plain chat (uses the faster model).'
+        :`&#9888; Couldn't reach DeepSeek (${esc(e.message||e.name)}). Run via http://localhost and check the F12 console for the exact error.`;
   }
   log.scrollTop=log.scrollHeight;
 }
