@@ -191,6 +191,7 @@ select.form-in{cursor:pointer}
 </style>
 </head>
 <body>
+<div id="auth-gate-overlay" style="position:fixed;inset:0;z-index:99999;background:#0B0E14;display:flex;align-items:center;justify-content:center;color:#8A93A6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px">Checking session…</div>
 <div id="app">
   <aside id="sidebar">
     <div class="sb-logo"><div class="sb-mark">W</div><span class="sb-name">Wealthview</span></div>
@@ -211,7 +212,7 @@ select.form-in{cursor:pointer}
       <div class="nav-item" data-v="asst" onclick="nav('asst')"><span class="ni">&#10022;</span>Assistant</div>
       <div class="nav-item" data-v="notes" onclick="nav('notes')"><span class="ni">&#9998;</span>Dev Notes <span id="nb-ct" style="margin-left:auto;font-size:10.5px;background:var(--accent-12);color:var(--accent-h);border-radius:99px;padding:1px 7px"></span></div>
     </nav>
-    <div class="sb-user"><div class="sb-user-in"><div class="av-user">SO</div><div style="min-width:0"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Sean O&#39;Byrne</div><div style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:5px">Heaventree Ltd. · <span style="color:var(--accent-h)">build 17.07-c</span> <span id="db-dot" style="width:7px;height:7px;border-radius:50%;background:#5B6373;display:inline-block" title="Turso"></span></div></div></div></div>
+    <div class="sb-user"><a href="/?pro=1" style="display:block;text-align:center;font-size:11px;color:var(--dimmed);padding:6px 0 2px;text-decoration:none" onmouseover="this.style.color='var(--accent-h)'" onmouseout="this.style.color='var(--dimmed)'">Try Pro (beta) &#8594;</a><div class="sb-user-in"><div class="av-user">SO</div><div style="min-width:0"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Sean O&#39;Byrne</div><div style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:5px">Heaventree Ltd. · <span style="color:var(--accent-h)">build 17.07-d</span> <span id="db-dot" style="width:7px;height:7px;border-radius:50%;background:#5B6373;display:inline-block" title="Turso"></span></div></div></div></div>
   </aside>
   <div id="main">
     <div class="topbar">
@@ -1720,11 +1721,25 @@ function dl(rows,fn){const csv=rows.map(r=>r.map(v=>`"${String(v==null?'':v).rep
 function xTx(){const l=txList();dl([['Date','Payee','Category','Group','Amount','Type','Recurring']].concat(l.map(t=>[t.d,t.vendor.name,t.cat.name,t.cat.group,t.a,t.t==='i'?'income':'expense',t.r?'Y':'N'])),'wealthview-transactions.csv');}
 function xRun(){const l=runList();dl([['Vendor','Group','Charges','First','Last','AvgPerMonth','Lifetime','Recurring','Status']].concat(l.map(v=>[v.name,v.group,v.count,v.first,v.last,v.avgMonthly,v.total,isRecurring(v)?'Y':'N',vStatus(v)])),'wealthview-running-costs.csv');}
 
-// ═════════════ BOOT ═════════════
-rebuild();
-nav('dashboard');
-noteBadge();
-cloudBoot();
+// ═════════════ BOOT (shared auth gate with Pro) ═════════════
+function bootApp(){
+  rebuild();
+  nav('dashboard');
+  noteBadge();
+  cloudBoot();
+  const ov=document.getElementById('auth-gate-overlay');if(ov)ov.remove();
+}
+(function authGuard(){
+  const DEV=['localhost','127.0.0.1'].includes(location.hostname);
+  if(DEV){bootApp();return;}
+  const t=localStorage.getItem('wv_session');
+  if(!t){location.replace('/?return='+encodeURIComponent(location.pathname));return;}
+  fetch('/api/auth/check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:t})})
+    .then(r=>r.json()).then(j=>{
+      if(j.ok)bootApp();
+      else{localStorage.removeItem('wv_session');location.replace('/?return='+encodeURIComponent(location.pathname));}
+    }).catch(()=>bootApp());
+})();
 </script>
 </body>
 </html>
