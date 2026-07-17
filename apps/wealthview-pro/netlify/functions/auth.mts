@@ -9,11 +9,13 @@
 //   TURSO_URL, TURSO_TOKEN            - the wealth-manager database
 //   AUTH_SECRET                       - any long random string (session signing)
 //   RESEND_API_KEY                    - free key from resend.com
-//   ALLOWED_EMAIL (optional)          - defaults to s.byrne@heaventreedesign.com
+//   ALLOWED_EMAIL (required)          - the ONLY address allowed to log in.
+//                                       Must match the Resend account email in
+//                                       test mode (Resend only delivers there).
 //   ALLOW_DEV_CODE (optional, "1")    - returns the code in the response
 //                                       instead of emailing (testing only)
 
-const ALLOWED = () => (process.env.ALLOWED_EMAIL || 's.byrne@heaventreedesign.com').toLowerCase()
+const ALLOWED = () => (process.env.ALLOWED_EMAIL || '').toLowerCase()
 const enc = new TextEncoder()
 
 async function sha256(s: string) {
@@ -61,6 +63,7 @@ export default async (req: Request) => {
   try { body = await req.json() } catch { return json({ error: 'bad json' }, 400) }
 
   if (action === 'request') {
+    if (!ALLOWED()) return json({ error: 'ALLOWED_EMAIL not configured' }, 500)
     const email = (body.email || '').trim().toLowerCase()
     // Do not reveal the allowlist: always claim success.
     if (email !== ALLOWED()) return json({ ok: true, sent: true })

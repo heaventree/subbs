@@ -10,7 +10,7 @@ type Phase = 'checking' | 'email' | 'code' | 'authed'
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const [phase, setPhase] = useState<Phase>(DEV ? 'authed' : 'checking')
-  const [email, setEmail] = useState('s.byrne@heaventreedesign.com')
+  const [email, setEmail] = useState('')
   const [code, setCode] = useState('')
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
@@ -67,7 +67,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           <>
             <div className="kpi-label mb-2 flex items-center gap-1.5"><Lock size={11} /> Sign in</div>
             <input className="input w-full mb-3" type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && requestCode()} placeholder="you@example.com" />
+              onKeyDown={(e) => e.key === 'Enter' && requestCode()} placeholder="your email" />
             <button className="btn-primary w-full justify-center" disabled={busy} onClick={requestCode}>
               {busy ? 'Sending…' : 'Email me a login code'}
             </button>

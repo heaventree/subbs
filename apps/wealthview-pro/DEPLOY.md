@@ -15,10 +15,10 @@
 | `TURSO_TOKEN` | same token |
 | `AUTH_SECRET` | any long random string (session signing) |
 | `RESEND_API_KEY` | free key from resend.com (see below) |
-| `ALLOWED_EMAIL` | `s.byrne@heaventreedesign.com` (optional, this is the default) |
+| `ALLOWED_EMAIL` | **required** — the only address allowed to log in. In Resend test mode this MUST be the same address your Resend account is registered with, or codes won't deliver |
 
 ## 3. Email codes (Resend, ~2 minutes)
-1. Sign up at resend.com **with s.byrne@heaventreedesign.com**
+1. Sign up at resend.com **with the same email you'll log in with** (test-mode Resend only delivers to the account owner's address)
 2. API Keys → Create → paste as `RESEND_API_KEY`
 3. No domain setup needed: codes send from `onboarding@resend.dev`, which
    Resend allows to your own account email — exactly our single-email case.
@@ -27,7 +27,7 @@ Testing without email: set `ALLOW_DEV_CODE=1` and the request response
 includes the code (remove for real use).
 
 ## 4. Login behaviour
-- Only `ALLOWED_EMAIL` receives codes (other emails get a silent no-op)
+- Only `ALLOWED_EMAIL` receives codes (other emails get a silent no-op); the login form is blank — no address disclosed on the public page
 - 6-digit code, 10-minute expiry, 5 attempts, stored hashed in Turso
 - Session = signed token, 30 days, in localStorage
 - **localhost bypasses the gate** so local dev/testing is frictionless
