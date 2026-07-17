@@ -1,0 +1,14 @@
+# Netlify config for Wealthview Pro.
+# In the Netlify UI set Base directory = apps/wealthview-pro
+[build]
+  command = "npm install && npm run build"
+  publish = "dist"
+
+[functions]
+  directory = "netlify/functions"
+
+# SPA fallback
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

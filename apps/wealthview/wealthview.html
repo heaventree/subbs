@@ -64,6 +64,7 @@ html,body{height:100%;overflow:hidden;background:var(--canvas);color:var(--text)
 .b-cancelled{background:rgba(239,68,68,.12);color:var(--expense-t)}.b-cancelled .bdot{background:var(--expense-t)}
 .b-paused{background:rgba(99,102,241,.12);color:var(--accent-h)}.b-paused .bdot{background:var(--accent-h)}
 .b-lapsed{background:rgba(91,99,115,.2);color:var(--dimmed)}.b-lapsed .bdot{background:var(--dimmed)}
+.b-completed{background:rgba(6,182,212,.12);color:#22D3EE}.b-completed .bdot{background:#22D3EE}
 .b-cycle{background:var(--accent-12);color:var(--accent-h);border-radius:6px}
 .av{display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;overflow:hidden}
 .av img{width:100%;height:100%;object-fit:contain;padding:3px}
@@ -208,8 +209,9 @@ select.form-in{cursor:pointer}
       <div class="nav-sec">Tools</div>
       <div class="nav-item" data-v="rules" onclick="nav('rules')"><span class="ni">&#9881;</span>Rules Engine</div>
       <div class="nav-item" data-v="asst" onclick="nav('asst')"><span class="ni">&#10022;</span>Assistant</div>
+      <div class="nav-item" data-v="notes" onclick="nav('notes')"><span class="ni">&#9998;</span>Dev Notes <span id="nb-ct" style="margin-left:auto;font-size:10.5px;background:var(--accent-12);color:var(--accent-h);border-radius:99px;padding:1px 7px"></span></div>
     </nav>
-    <div class="sb-user"><div class="sb-user-in"><div class="av-user">SO</div><div style="min-width:0"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Sean O&#39;Byrne</div><div style="font-size:11px;color:var(--muted)">Heaventree Ltd.</div></div></div></div>
+    <div class="sb-user"><div class="sb-user-in"><div class="av-user">SO</div><div style="min-width:0"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Sean O&#39;Byrne</div><div style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:5px">Heaventree Ltd. · <span style="color:var(--accent-h)">build 17.07-c</span> <span id="db-dot" style="width:7px;height:7px;border-radius:50%;background:#5B6373;display:inline-block" title="Turso"></span></div></div></div></div>
   </aside>
   <div id="main">
     <div class="topbar">
@@ -227,12 +229,24 @@ select.form-in{cursor:pointer}
       <div class="view" id="view-cats"></div>
       <div class="view" id="view-ltd"></div>
       <div class="view" id="view-rules"></div>
+      <div class="view" id="view-notes"></div>
       <div class="view" id="view-asst" style="padding:0"></div>
     </div>
   </div>
 </div>
 <div class="modal-bg" id="modal-bg" onclick="if(event.target===this)closeModal()"><div class="modal" id="modal"></div></div>
 <div class="toast" id="toast"></div>
+<div id="note-fab" onclick="noteOpen()" title="Add a dev note (or press N)" style="position:fixed;bottom:22px;left:252px;z-index:800;width:44px;height:44px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;cursor:pointer;box-shadow:0 6px 24px rgba(99,102,241,.45)">&#9998;</div>
+<div id="note-pop" style="position:fixed;bottom:76px;left:252px;z-index:801;width:340px;background:var(--raised);border:1px solid var(--border);border-radius:14px;padding:16px;display:none;box-shadow:0 16px 48px rgba(0,0,0,.55)">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:9px"><span style="font-size:13px;font-weight:600">New note</span><span id="note-ctx" style="font-size:11px;color:var(--dimmed)"></span></div>
+  <textarea id="note-txt" placeholder="What's wrong / what should change here…" style="width:100%;height:84px;background:var(--canvas);border:1px solid var(--border);border-radius:9px;color:var(--text);font-size:13px;padding:9px 11px;outline:none;resize:vertical;font-family:inherit"></textarea>
+  <div style="display:flex;align-items:center;gap:7px;margin-top:9px">
+    <select id="note-sev" class="flt" style="height:31px"><option value="bug">&#128027; Bug</option><option value="data">&#128202; Data wrong</option><option value="idea">&#128161; Idea</option><option value="ui">&#127912; UI</option></select>
+    <span style="flex:1"></span>
+    <button class="btn btn-sm btn-ghost" onclick="noteClose()">Cancel</button>
+    <button class="btn btn-sm btn-primary" onclick="noteSave()">Save (Ctrl+Enter)</button>
+  </div>
+</div>
 <script>
 'use strict';
 // ═════════════ DATA ═════════════
@@ -240,12 +254,14 @@ const RAW={"meta":{"generated":"2026-07-16","source":"BudgetBakers export (Jun 2
 const BFKEY=localStorage.getItem('wv_bfkey')||'';
 const DSKEY=()=>localStorage.getItem('wv_dskey')||'';
 const FHKEY=()=>localStorage.getItem('wv_fhkey')||'';
+const TURSO_URL=()=>localStorage.getItem('wv_turso_url')||'';
+const TURSO_TOKEN=()=>localStorage.getItem('wv_turso_token')||'';
 const LOGOC={};
 
 // Expand compact tx: [date, vendorIdx, amount, catIdx, type, recurring]
 const V=RAW.vendors, CATS=RAW.cats, GROUPS=RAW.groups, RAWS=RAW.raws||[];
 const GC={}; GROUPS.forEach(g=>GC[g.name]=g.color);
-const TX=RAW.tx.map(t=>({d:t[0],v:t[1],a:t[2],c:t[3],t:t[4],r:t[5]===1,w:t[6],ve:t[1],
+const TX=RAW.tx.map(t=>({d:t[0],v:t[1],a:t[2],c:t[3],t:t[4],t0:t[4],r:t[5]===1,w:t[6],ve:t[1],
   get vendor(){return V[this.ve]},get cat(){return CATS[this.c]}}));
 V.forEach((v,i)=>{v.idx=i;v.color=GC[v.group]||'#6B7280';});
 
@@ -269,7 +285,15 @@ function rebuild(){
     v.absorbed=!!S2.merges[v.id];
   });
   Object.keys(VTX).forEach(k=>delete VTX[k]);
-  TX.forEach((t,i)=>{t.ve=resolveIdx(t.v);(VTX[t.ve]=VTX[t.ve]||[]).push(i);});
+  TX.forEach((t,i)=>{
+    t.ve=resolveIdx(t.v);
+    const ov=S.typeOv&&S.typeOv[V[t.ve].id];
+    t.t=(ov&&t.t0!=='x')?ov:t.t0;             // income⇄expense fix follows the vendor
+    (VTX[t.ve]=VTX[t.ve]||[]).push(i);
+  });
+  // monthly series follows the corrected types
+  MONTHS.forEach(m=>{MSER[m]={inc:0,exp:0,xfer:0};});
+  TX.forEach(t=>{const m=MSER[t.d.slice(0,7)];if(!m)return;if(t.t==='i')m.inc+=t.a;else if(t.t==='x')m.xfer+=t.a;else m.exp+=t.a;});
   V.forEach(v=>{
     const ids=VTX[v.idx]||[];
     if(v.absorbed){v.count=0;v.total=0;return;}
@@ -283,7 +307,7 @@ function rebuild(){
       const sy=+first.slice(0,4),sm=+first.slice(5,7),ey=+last.slice(0,4),em=+last.slice(5,7);
       v.spanMonths=(ey-sy)*12+(em-sm)+1;
       v.avgMonthly=Math.round(total/v.spanMonths*100)/100;
-      v.type=hasI?'i':(hasE?'e':(hasX?'x':v.type));
+      v.type=S.typeOv[v.id]||(hasI?'i':(hasE?'e':(hasX?'x':v.type)));
       v.recurCt=recurCt;v.recurring=recurCt>0;
     }
   });
@@ -300,13 +324,15 @@ const S2={
   names:JSON.parse(localStorage.getItem('wv_names')||'{}'),   // vendorId -> display name
   merges:JSON.parse(localStorage.getItem('wv_merges')||'{}'), // absorbedId -> primaryId
 };
-function saveS2(){localStorage.setItem('wv_names',JSON.stringify(S2.names));localStorage.setItem('wv_merges',JSON.stringify(S2.merges));}
+function saveS2(){localStorage.setItem('wv_names',JSON.stringify(S2.names));localStorage.setItem('wv_merges',JSON.stringify(S2.merges));if(typeof schedulePush==='function')schedulePush();}
 const S={view:'dashboard',range:12,vSearch:'',vType:'e',vSort:'total',
   ov:JSON.parse(localStorage.getItem('wv_ov')||'{}'),         // vendor status overrides
   rec:JSON.parse(localStorage.getItem('wv_rec')||'{}'),       // vendor recurring overrides
   rules:JSON.parse(localStorage.getItem('wv_rules')||'[]'),
   assets:JSON.parse(localStorage.getItem('wv_assets')||'[]'),
-  holdings:JSON.parse(localStorage.getItem('wv_holdings')||'[]'),  // {id,ticker,name,shares,ccy,price,priceAt,src}
+  holdings:JSON.parse(localStorage.getItem('wv_holdings')||'[]'),
+  notes:JSON.parse(localStorage.getItem('wv_notes')||'[]'),   // {id,text,view,sev,status,at}
+  typeOv:JSON.parse(localStorage.getItem('wv_typeov')||'{}'),  // vendorId -> 'i'|'e' (fix jumbled income/expense)  // {id,ticker,name,shares,ccy,price,priceAt,src}
   fx:JSON.parse(localStorage.getItem('wv_fx')||'{}'),              // {USD:0.92,...} to EUR
   nwHist:JSON.parse(localStorage.getItem('wv_nwhist')||'[]'),
   rSearch:'',rGroup:'',rMin:3,rSort:'avg',rDir:-1,
@@ -316,7 +342,7 @@ const S={view:'dashboard',range:12,vSearch:'',vType:'e',vSort:'total',
   tSearch:'',tType:'all',tGroup:'',tCat:'',tYear:'',tMin:'',tMax:'',tRec:'',tPage:1,tSort:'d',tDir:-1,
   cfYear:'',
 };
-function save(){['ov','rec','rules','assets','nwHist','owner','holdings','fx'].forEach(k=>localStorage.setItem('wv_'+(k==='nwHist'?'nwhist':k),JSON.stringify(S[k])));localStorage.setItem('wv_amtmode',S.amtMode);}
+function save(){['ov','rec','rules','assets','nwHist','owner','holdings','fx','notes','typeOv'].forEach(k=>localStorage.setItem('wv_'+(k==='nwHist'?'nwhist':k==='typeOv'?'typeov':k),JSON.stringify(S[k])));localStorage.setItem('wv_amtmode',S.amtMode);if(typeof schedulePush==='function')schedulePush();}
 
 // ═════════════ HELPERS ═════════════
 const fmt=n=>new Intl.NumberFormat('en-IE',{style:'currency',currency:'EUR',minimumFractionDigits:2}).format(n);
@@ -324,21 +350,36 @@ const fmt0=n=>new Intl.NumberFormat('en-IE',{style:'currency',currency:'EUR',max
 const fmtD=s=>{if(!s)return'—';const d=new Date(s+'T00:00:00');return d.toLocaleDateString('en-IE',{day:'2-digit',month:'short',year:'2-digit'})};
 const fmtM=m=>{const d=new Date(m+'-15');return d.toLocaleDateString('en-IE',{month:'short',year:'2-digit'})};
 const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+let _dt=null;
+function deb(fn,fid){clearTimeout(_dt);_dt=setTimeout(()=>{fn();const e=fid&&document.getElementById(fid);
+  if(e){e.focus();try{const l=e.value.length;e.setSelectionRange(l,l);}catch(x){}}},240);}
 function toast(m,c){const e=document.getElementById('toast');e.innerHTML=`<span style="color:${c||'#34D399'}">&#9679;</span> ${m}`;e.classList.add('show');clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove('show'),2600);}
 
 // A subscription = a regular recurring OUTGOING, not just anything the bank
 // flagged. Definition: an expense vendor charged in >=3 distinct months AND
 // present in >=40% of the months since its first charge (steady cadence).
 // Manual/rule overrides in S.rec always win, so you keep full control.
+// Groups where a monthly cadence really means a service contract
+const SUB_GROUPS=new Set(['AI & Software','Hosting & Domains','Home & Utilities',
+  'Insurance & Loans','Business Ops','Education']);
+// How steady the monthly amount is: 1 = identical every month, 0 = chaotic
+function amtSteadiness(v){
+  const per={};(VTX[v.idx]||[]).forEach(i=>{const t=TX[i];if(t.t!=='e')return;const m=t.d.slice(0,7);per[m]=(per[m]||0)+t.a;});
+  const vals=Object.values(per);if(vals.length<3)return 0;
+  const mean=vals.reduce((a,b)=>a+b,0)/vals.length;if(!mean)return 0;
+  const sd=Math.sqrt(vals.reduce((a,b)=>a+(b-mean)*(b-mean),0)/vals.length);
+  return Math.max(0,1-sd/mean);
+}
 function detectSub(v){
   if(v.type!=='e') return false;
   if(v.activeMonths<3) return false;
   if(!(v.avgMonthly>0)) return false;
   const coverage = v.activeMonths/Math.max(v.spanMonths,1);   // present most months
   const perMonth = v.count/v.activeMonths;                    // ~1 charge/month = a bill
-  // A subscription bills roughly monthly. Groceries / Amazon fire many times a
-  // month (high perMonth) — exclude them. "Monthly outgoing", per your rule.
-  return coverage>=0.4 && perMonth<=1.6;
+  if(coverage<0.4||perMonth>1.6) return false;
+  // Frequent-but-organic spending (vet, restaurants, fuel) isn't a contract:
+  // require either a service-type group OR a steady billed amount.
+  return SUB_GROUPS.has(v.group) || amtSteadiness(v)>=0.65;
 }
 function isRecurring(v){ if(S.rec[v.id]!==undefined)return S.rec[v.id]; return detectSub(v); }
 // Most recent expense charge for a vendor (TX is sorted newest-first)
@@ -407,10 +448,94 @@ function sum(arr,f){return arr.reduce((a,x)=>a+f(x),0);}
 function amtCol(t){return t==='i'?'var(--income-t)':t==='x'?'var(--muted)':'var(--expense-t)';}
 function amtSign(t){return t==='i'?'+':t==='x'?'⇄':'-';}
 
+// ═════════════ TURSO CLOUD SYNC ═════════════
+// All user edits (renames, merges, statuses, owners, holdings, notes, rules…)
+// mirror to a Turso kv table: last-write-wins per key. localStorage stays the
+// offline cache, so the app works fully without the cloud.
+let DB_OK=null, _pushT=null;
+const SYNC_GET={
+  ov:()=>S.ov, rec:()=>S.rec, rules:()=>S.rules, assets:()=>S.assets,
+  nwHist:()=>S.nwHist, owner:()=>S.owner, holdings:()=>S.holdings,
+  notes:()=>S.notes, typeOv:()=>S.typeOv, names:()=>S2.names,
+  merges:()=>S2.merges, amtMode:()=>S.amtMode,
+};
+const SYNC_SET={
+  ov:v=>S.ov=v, rec:v=>S.rec=v, rules:v=>S.rules=v, assets:v=>S.assets=v,
+  nwHist:v=>S.nwHist=v, owner:v=>S.owner=v, holdings:v=>S.holdings=v,
+  notes:v=>S.notes=v, typeOv:v=>S.typeOv=v, names:v=>S2.names=v,
+  merges:v=>S2.merges=v, amtMode:v=>S.amtMode=v,
+};
+const SM=JSON.parse(localStorage.getItem('wv_syncmeta')||'{}');   // key -> ts
+const _pushed={};                                                  // key -> last pushed JSON
+function smSave(){localStorage.setItem('wv_syncmeta',JSON.stringify(SM));}
+async function tq(stmts){
+  const u=TURSO_URL(),t=TURSO_TOKEN();
+  if(!u||!t)throw new Error('no-turso');
+  const requests=stmts.map(x=>({type:'execute',stmt:{sql:x.sql,
+    args:(x.args||[]).map(a=>typeof a==='number'?{type:'integer',value:String(Math.round(a))}:{type:'text',value:String(a)})}}));
+  requests.push({type:'close'});
+  const r=await fetch(u.replace('libsql://','https://')+'/v2/pipeline',{
+    method:'POST',headers:{Authorization:'Bearer '+t,'Content-Type':'application/json'},
+    signal:(AbortSignal&&AbortSignal.timeout)?AbortSignal.timeout(15000):undefined,
+    body:JSON.stringify({requests})});
+  if(!r.ok)throw new Error('HTTP '+r.status);
+  const j=await r.json();
+  const bad=(j.results||[]).find(x=>x.type==='error');
+  if(bad)throw new Error((bad.error&&bad.error.message)||'turso error');
+  return j.results;
+}
+function dbDot(){
+  const el=document.getElementById('db-dot');if(!el)return;
+  el.style.background=DB_OK===true?'#34D399':DB_OK===false?'#F87171':'#5B6373';
+  el.title=DB_OK===true?'Turso: synced':DB_OK===false?'Turso: offline (edits kept locally)':'Turso: connecting…';
+}
+function schedulePush(){
+  clearTimeout(_pushT);
+  _pushT=setTimeout(async()=>{
+    const now=Date.now(),stmts=[],keys=[];
+    for(const k in SYNC_GET){
+      const v=JSON.stringify(SYNC_GET[k]());
+      if(_pushed[k]===v)continue;
+      stmts.push({sql:'INSERT INTO kv (k,v,ts) VALUES (?,?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v,ts=excluded.ts',args:[k,v,now]});
+      keys.push([k,v]);
+    }
+    if(!stmts.length)return;
+    try{
+      await tq(stmts);
+      keys.forEach(([k,v])=>{_pushed[k]=v;SM[k]=now;});
+      smSave();DB_OK=true;dbDot();
+    }catch(e){DB_OK=false;dbDot();}
+  },2000);
+}
+async function cloudBoot(){
+  try{
+    await tq([{sql:'CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT, ts INTEGER)'}]);
+    const res=await tq([{sql:'SELECT k,v,ts FROM kv'}]);
+    const rows=(res[0]&&res[0].response&&res[0].response.result&&res[0].response.result.rows)||[];
+    let applied=0;
+    rows.forEach(r=>{
+      const k=r[0]&&r[0].value,v=r[1]&&r[1].value,ts=+((r[2]&&r[2].value)||0);
+      if(!k||!(k in SYNC_SET))return;
+      _pushed[k]=v;
+      const localTs=SM[k]||0;
+      const localV=JSON.stringify(SYNC_GET[k]());
+      if(ts>localTs&&v!==localV){
+        try{SYNC_SET[k](JSON.parse(v));SM[k]=ts;applied++;}catch(e){}
+      }
+    });
+    if(applied){smSave();save();saveS2();rebuild();if(RENDER[S.view])RENDER[S.view]();noteBadge();
+      toast('Synced '+applied+' change set'+(applied>1?'s':'')+' from cloud');}
+    DB_OK=true;dbDot();
+    schedulePush(); // push anything local the cloud lacks
+  }catch(e){
+    DB_OK=(e.message==='no-turso')?null:false;dbDot();
+  }
+}
+
 // ═════════════ NAV ═════════════
 const TITLES={dashboard:['Overview','Dashboard'],networth:['Wealth','Net Worth'],cashflow:['Money In / Out','Cash Flow'],
   running:['Burn Rate','Running Costs'],subs:['Recurring','Subscriptions'],vendors:['Directory','Vendors'],tx:['Ledger','Transactions'],
-  cats:['Breakdown','Categories'],ltd:['AppSumo','Lifetime Deals'],rules:['Automation','Rules Engine'],asst:['AI','Assistant']};
+  cats:['Breakdown','Categories'],ltd:['AppSumo','Lifetime Deals'],rules:['Automation','Rules Engine'],notes:['Feedback','Dev Notes'],asst:['AI','Assistant']};
 const RENDER={};
 function nav(v){
   S.view=v;
@@ -438,7 +563,7 @@ RENDER.dashboard=function(){
   const inc3=sum(compl,m=>MSER[m].inc)/compl.length;
   const cur=MSER[CURM];
   const nw=nwTotal();
-  const recV=V.filter(v=>v.type==='e'&&isRecurring(v)&&vStatus(v)!=='lapsed'&&vStatus(v)!=='cancelled');
+  const recV=V.filter(v=>v.type==='e'&&isRecurring(v)&&!['lapsed','cancelled','completed'].includes(vStatus(v)));
   const recMo=sum(recV,v=>subCost(v));
 
   const maxB=Math.max(...mo.map(m=>Math.max(MSER[m].inc,MSER[m].exp)));
@@ -722,11 +847,13 @@ function runList(){
   if(S.rSearch){const q=S.rSearch.toLowerCase();l=l.filter(v=>v.name.toLowerCase().includes(q)||v.group.toLowerCase().includes(q));}
   if(S.rGroup)l=l.filter(v=>v.group===S.rGroup);
   if(S.rOwner)l=l.filter(v=>S.rOwner==='unassigned'?!ownerOf(v):ownerOf(v)===S.rOwner);
-  const key={avg:v=>v.avgMonthly,total:v=>v.total,count:v=>v.count,last:v=>v.last,name:v=>v.name};
+  const key={avg:v=>v.avgMonthly,total:v=>v.total,count:v=>v.count,last:v=>v.last,name:v=>v.name.toLowerCase(),typ:v=>typical(v)};
   const f=key[S.rSort]||key.avg;
   l.sort((a,b)=>{const x=f(a),y=f(b);return(x<y?-1:x>y?1:0)*S.rDir;});
   return l;
 }
+function rsort(k){if(S.rSort===k)S.rDir*=-1;else{S.rSort=k;S.rDir=k==='name'?1:-1;}RENDER.running();}
+function rarr(k){return S.rSort===k?(S.rDir===-1?' &#9662;':' &#9652;'):'';}
 RENDER.running=function(){
   const el=document.getElementById('view-running');
   const l=runList();
@@ -754,7 +881,7 @@ RENDER.running=function(){
   <div class="kpi"><div class="kpi-l">Combined avg</div><div class="kpi-v mono">${fmt0(sum(l,v=>v.avgMonthly))}/mo</div><div class="kpi-s">sum of listed vendor averages</div></div>
 </div>
 <div class="filter-bar">
-  <div class="srch"><span class="si">&#128269;</span><input placeholder="Search vendors…" value="${esc(S.rSearch)}" oninput="S.rSearch=this.value;RENDER.running()"></div>
+  <div class="srch"><span class="si">&#128269;</span><input id="srch-run" placeholder="Search vendors…" value="${esc(S.rSearch)}" oninput="S.rSearch=this.value;deb(RENDER.running,'srch-run')"></div>
   <select class="flt" onchange="S.rGroup=this.value;RENDER.running()"><option value="">All groups</option>${groups.map(g=>`<option ${S.rGroup===g?'selected':''}>${g}</option>`).join('')}</select>
   <select class="flt" onchange="S.rOwner=this.value;RENDER.running()"><option value="">All owners</option><option value="heaventree"${S.rOwner==='heaventree'?' selected':''}>Heaventree</option><option value="personal"${S.rOwner==='personal'?' selected':''}>Personal</option><option value="unassigned"${S.rOwner==='unassigned'?' selected':''}>Unassigned</option></select>
   <select class="flt" onchange="S.rMin=+this.value;RENDER.running()"><option value="1"${S.rMin===1?' selected':''}>Min 1 charge</option><option value="2"${S.rMin===2?' selected':''}>Min 2</option><option value="3"${S.rMin===3?' selected':''}>Min 3</option><option value="6"${S.rMin===6?' selected':''}>Min 6</option><option value="12"${S.rMin===12?' selected':''}>Min 12</option></select>
@@ -764,7 +891,13 @@ RENDER.running=function(){
     <option value="name:1"${S.rSort==='name'?' selected':''}>Name A&#8211;Z</option></select>
   <span class="res-ct">${l.length} vendors${l.length>300?' (showing 300)':''}</span>
 </div>
-<table class="tbl"><thead><tr><th>Vendor</th><th>Type</th><th>Charges</th><th>Active period</th><th>Avg / month</th><th>Typical / mo</th><th>Lifetime</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+<table class="tbl"><thead><tr>
+<th onclick="rsort('name')">Vendor${rarr('name')}</th><th>Type</th>
+<th onclick="rsort('count')">Charges${rarr('count')}</th><th>Active period</th>
+<th onclick="rsort('avg')">Avg / month${rarr('avg')}</th>
+<th onclick="rsort('typ')">Typical / mo${rarr('typ')}</th>
+<th onclick="rsort('total')">Lifetime${rarr('total')}</th>
+<th onclick="rsort('last')">Status${rarr('last')}</th></tr></thead><tbody>${rows}</tbody></table>`;
   loadLogos('rv',l.slice(0,300));
 };
 
@@ -798,6 +931,7 @@ RENDER.subs=function(){
   <div class="status-menu"><div class="status-btn badge b-${st}" onclick="event.stopPropagation();togSM('${v.id}')"><span class="bdot"></span>${st} &#9662;</div>
     <div class="status-dd" id="sm_${v.id}" style="display:none">
       ${['active','review','paused','cancelled'].map(s=>`<div class="opt" onclick="setSt('${v.id}','${s}')"><span style="color:var(--${s==='active'?'income-t':s==='review'?'warn':s==='paused'?'accent-h':'expense-t'})">&#9679;</span> ${s.charAt(0).toUpperCase()+s.slice(1)}</div>`).join('')}
+      <div class="opt" onclick="setSt('${v.id}','completed')"><span style="color:#22D3EE">&#10003;</span> Completed <span style="font-size:10px;color:var(--dimmed)">(loan/term ended)</span></div>
       <div class="opt" style="border-top:1px solid var(--border);margin-top:3px;padding-top:8px" onclick="setRec('${v.id}',false)"><span style="color:var(--dimmed)">&#8856;</span> Not recurring</div>
     </div></div>
 </div>
@@ -823,9 +957,9 @@ RENDER.subs=function(){
   <span>Showing regular monthly outgoings — expense vendors charged in 3+ months with steady cadence. Something wrong? Change any card's status, or set a <span style="color:var(--accent-h);cursor:pointer" onclick="nav('rules')">rule</span> to control what counts.</span>
 </div>
 <div class="filter-bar">
-  <div class="srch"><span class="si">&#128269;</span><input placeholder="Search…" value="${esc(S.sSearch)}" oninput="S.sSearch=this.value;RENDER.subs()"></div>
+  <div class="srch"><span class="si">&#128269;</span><input id="srch-subs" placeholder="Search…" value="${esc(S.sSearch)}" oninput="S.sSearch=this.value;deb(RENDER.subs,'srch-subs')"></div>
   <select class="flt" onchange="S.sGroup=this.value;RENDER.subs()"><option value="">All groups</option>${groups.map(g=>`<option ${S.sGroup===g?'selected':''}>${g}</option>`).join('')}</select>
-  <select class="flt" onchange="S.sStatus=this.value;RENDER.subs()"><option value="">All statuses</option>${['active','review','paused','cancelled','lapsed'].map(s=>`<option ${S.sStatus===s?'selected':''}>${s}</option>`).join('')}</select>
+  <select class="flt" onchange="S.sStatus=this.value;RENDER.subs()"><option value="">All statuses</option>${['active','review','paused','cancelled','completed','lapsed'].map(s=>`<option ${S.sStatus===s?'selected':''}>${s}</option>`).join('')}</select>
   <select class="flt" onchange="S.sOwner=this.value;RENDER.subs()"><option value="">All owners</option><option value="heaventree"${S.sOwner==='heaventree'?' selected':''}>Heaventree</option><option value="personal"${S.sOwner==='personal'?' selected':''}>Personal</option><option value="unassigned"${S.sOwner==='unassigned'?' selected':''}>Unassigned</option></select>
   <select class="flt" onchange="S.sSort=this.value;RENDER.subs()"><option value="cost"${S.sSort==='cost'?' selected':''}>Sort: cost/mo</option><option value="name"${S.sSort==='name'?' selected':''}>Sort: name</option><option value="last"${S.sSort==='last'?' selected':''}>Sort: last charge</option></select>
   <div class="seg" title="How to price variable bills"><button class="${S.amtMode==='last'?'active':''}" onclick="S.amtMode='last';save();RENDER.subs()">Last payment</button><button class="${S.amtMode==='typical'?'active':''}" onclick="S.amtMode='typical';save();RENDER.subs()">Average</button></div>
@@ -847,19 +981,22 @@ RENDER.vendors=function(){
   if(S.vSearch){const q=S.vSearch.toLowerCase();l=l.filter(v=>v.name.toLowerCase().includes(q)||(v.origName||'').toLowerCase().includes(q));}
   const key={total:v=>v.total,count:v=>v.count,last:v=>v.last,name:v=>v.name.toLowerCase(),typ:v=>typical(v)};
   const f=key[S.vSort]||key.total;
-  l.sort((a,b)=>{const x=f(a),y=f(b);return S.vSort==='name'?(x<y?-1:1):(y<x?-1:y>x?1:0);});
+  const dir=S.vDir||(S.vSort==='name'?1:-1);
+  l.sort((a,b)=>{const x=f(a),y=f(b);return (x<y?-1:x>y?1:0)*dir;});
   const mergeCt=Object.keys(S2.merges).length,renameCt=Object.keys(S2.names).length;
   const rows=l.slice(0,400).map(v=>{
     const streams=new Set();(VTX[v.idx]||[]).forEach(i=>streams.add(TX[i].w));
     return `<tr class="rowh">
 <td onclick="vendorModal(${v.idx})"><div style="display:flex;align-items:center;gap:10px">${avHtml(v,30,'vd')}<div style="min-width:0"><div style="font-weight:500;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:230px">${esc(v.name)}${S2.names[v.id]?' <span title="renamed" style="color:var(--accent-h);font-size:10px">&#9998;</span>':''}</div><div style="font-size:10.5px;color:var(--dimmed)">${v.group} · ${streams.size} payment stream${streams.size!==1?'s':''}</div></div></div></td>
-<td>${v.type==='i'?'<span class="badge b-active" style="border-radius:6px">income</span>':v.type==='x'?'<span style="font-size:11px;color:var(--muted)">&#8644; transfer</span>':(isRecurring(v)?'<span class="badge b-cycle">&#8635; sub</span>':'<span style="font-size:11px;color:var(--dimmed)">expense</span>')}</td>
+<td>${v.type==='i'?'<span class="badge b-active" style="border-radius:6px">income</span>':v.type==='x'?'<span style="font-size:11px;color:var(--muted)">&#8644; transfer</span>':(isRecurring(v)
+  ?`<span class="badge b-cycle" style="cursor:pointer" title="Click: demote to one-off expense" onclick="event.stopPropagation();setRec('${v.id}',false)">&#8635; sub</span>`
+  :`<span class="badge" style="cursor:pointer;border:1px dashed var(--border);color:var(--dimmed);border-radius:6px" title="Click: mark as subscription" onclick="event.stopPropagation();setRec('${v.id}',true)">expense &#8635;?</span>`)}</td>
 <td class="mono" style="font-size:12px">${v.count}&times;</td>
 <td class="mono" style="font-size:11.5px;color:var(--muted)">${fmtD(v.last)}</td>
 <td class="mono" style="font-size:12.5px;font-weight:600">${fmt0(v.total)}</td>
 <td class="mono" style="font-size:12px;color:var(--warn)">${v.type==='e'?fmt(typical(v)):'—'}</td>
 <td>${ownerChips(v)}</td>
-<td style="white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();renameModal(${v.idx})" title="Rename">&#9998;</button><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();mergeModal(${v.idx})" title="Merge into another vendor">&#8888;</button></td></tr>`;
+<td style="white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();renameModal(${v.idx})" title="Rename">&#9998;</button><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();mergeModal(${v.idx})" title="Merge into another vendor">&#8888;</button>${v.type!=='x'?`<button class="btn btn-ghost btn-sm" style="font-size:10px" title="${v.type==='i'?'Reclassify as EXPENSE (vendor)':'Reclassify as INCOME (client)'}" onclick="event.stopPropagation();setVType('${v.id}','${v.type==='i'?'e':'i'}')">&#8645; ${v.type==='i'?'to exp':'to inc'}</button>`:''}</td></tr>`;
   }).join('');
   const mergedList=Object.entries(S2.merges).map(([from,to])=>{
     const fv=V[VBYID[from]],tv=V[VBYID[to]];if(!fv||!tv)return'';
@@ -867,15 +1004,23 @@ RENDER.vendors=function(){
   }).join('');
   el.innerHTML=`
 <div class="filter-bar">
-  <div class="srch" style="flex:1;max-width:300px"><span class="si">&#128269;</span><input placeholder="Search vendors (incl. original names)…" value="${esc(S.vSearch)}" oninput="S.vSearch=this.value;RENDER.vendors()"></div>
+  <div class="srch" style="flex:1;max-width:300px"><span class="si">&#128269;</span><input id="srch-ven" placeholder="Search vendors (incl. original names)…" value="${esc(S.vSearch)}" oninput="S.vSearch=this.value;deb(RENDER.vendors,'srch-ven')"></div>
   <div class="seg"><button class="${S.vType==='e'?'active':''}" onclick="S.vType='e';RENDER.vendors()">Expense</button><button class="${S.vType==='i'?'active':''}" onclick="S.vType='i';RENDER.vendors()">Income</button><button class="${S.vType==='x'?'active':''}" onclick="S.vType='x';RENDER.vendors()">Transfers</button><button class="${S.vType==='all'?'active':''}" onclick="S.vType='all';RENDER.vendors()">All</button></div>
   <select class="flt" onchange="S.vSort=this.value;RENDER.vendors()"><option value="total"${S.vSort==='total'?' selected':''}>Sort: lifetime</option><option value="typ"${S.vSort==='typ'?' selected':''}>Sort: typical/mo</option><option value="count"${S.vSort==='count'?' selected':''}>Sort: charges</option><option value="last"${S.vSort==='last'?' selected':''}>Sort: recent</option><option value="name"${S.vSort==='name'?' selected':''}>Sort: A&#8211;Z</option></select>
   <span class="res-ct">${l.length} vendors${l.length>400?' (showing 400)':''} · ${renameCt} renamed · ${mergeCt} merged</span>
 </div>
-<table class="tbl"><thead><tr><th>Vendor</th><th>Type</th><th>Charges</th><th>Last</th><th>Lifetime</th><th>Typical/mo</th><th>Owner</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+<table class="tbl"><thead><tr>
+<th onclick="vsort('name')">Vendor${varr('name')}</th><th>Type</th>
+<th onclick="vsort('count')">Charges${varr('count')}</th>
+<th onclick="vsort('last')">Last${varr('last')}</th>
+<th onclick="vsort('total')">Lifetime${varr('total')}</th>
+<th onclick="vsort('typ')">Typical/mo${varr('typ')}</th><th>Owner</th><th></th></tr></thead><tbody>${rows}</tbody></table>
 ${mergedList?`<div style="margin-top:22px;max-width:560px"><div class="sec-hdr"><div class="sec-t">Merged vendors (${mergeCt})</div></div><div class="card">${mergedList}</div></div>`:''}`;
   loadLogos('vd',l.slice(0,400));
 };
+function vsort(k){if(S.vSort===k)S.vDir=(S.vDir||-1)*-1;else{S.vSort=k;S.vDir=k==='name'?1:-1;}RENDER.vendors();}
+function varr(k){return S.vSort===k?((S.vDir||-1)===-1?' &#9662;':' &#9652;'):'';}
+function setVType(id,ty){S.typeOv[id]=ty;save();rebuild();RENDER[S.view]();toast('Reclassified — stats updated');}
 function renameModal(idx){
   const v=V[idx];
   openModal(`<div class="modal-hd"><div class="sec-t">Rename vendor</div><button class="modal-x" onclick="closeModal()">&#10005;</button></div>
@@ -958,15 +1103,15 @@ RENDER.tx=function(){
   const pag=pc>1?`<div class="pgn"><button class="pg-b" onclick="tp(${S.tPage-1})" ${S.tPage<=1?'disabled':''}>&#171;</button>${pgBtns(S.tPage,pc)}<button class="pg-b" onclick="tp(${S.tPage+1})" ${S.tPage>=pc?'disabled':''}>&#187;</button></div>`:'';
   el.innerHTML=`
 <div class="filter-bar">
-  <div class="srch" style="flex:1;max-width:280px"><span class="si">&#128269;</span><input placeholder="Search payee or category…" value="${esc(S.tSearch)}" oninput="S.tSearch=this.value;S.tPage=1;RENDER.tx()"></div>
+  <div class="srch" style="flex:1;max-width:280px"><span class="si">&#128269;</span><input id="srch-tx" placeholder="Search payee or category…" value="${esc(S.tSearch)}" oninput="S.tSearch=this.value;S.tPage=1;deb(RENDER.tx,'srch-tx')"></div>
   <div class="seg"><button class="${S.tType==='all'?'active':''}" onclick="S.tType='all';S.tPage=1;RENDER.tx()">All</button><button class="${S.tType==='expense'?'active':''}" onclick="S.tType='expense';S.tPage=1;RENDER.tx()">Out</button><button class="${S.tType==='income'?'active':''}" onclick="S.tType='income';S.tPage=1;RENDER.tx()">In</button><button class="${S.tType==='transfer'?'active':''}" onclick="S.tType='transfer';S.tPage=1;RENDER.tx()">Transfers</button></div>
   <select class="flt" onchange="S.tGroup=this.value;S.tCat='';S.tPage=1;RENDER.tx()"><option value="">All groups</option>${groups.map(g=>`<option ${S.tGroup===g?'selected':''}>${g}</option>`).join('')}</select>
   <select class="flt" onchange="S.tCat=this.value;S.tPage=1;RENDER.tx()"><option value="">All categories</option>${[...new Set(catsIn.map(c=>c.name))].sort().map(c=>`<option ${S.tCat===c?'selected':''}>${c}</option>`).join('')}</select>
   <select class="flt" onchange="S.tYear=this.value;S.tPage=1;RENDER.tx()"><option value="">All years</option>${years.map(y=>`<option ${S.tYear===y?'selected':''}>${y}</option>`).join('')}</select>
   <select class="flt" onchange="S.tRec=this.value;S.tPage=1;RENDER.tx()"><option value="">Rec + one-off</option><option value="rec"${S.tRec==='rec'?' selected':''}>Recurring only</option><option value="one"${S.tRec==='one'?' selected':''}>One-off only</option></select>
   <select class="flt" onchange="S.tOwner=this.value;S.tPage=1;RENDER.tx()"><option value="">All owners</option><option value="heaventree"${S.tOwner==='heaventree'?' selected':''}>Heaventree</option><option value="personal"${S.tOwner==='personal'?' selected':''}>Personal</option><option value="unassigned"${S.tOwner==='unassigned'?' selected':''}>Unassigned</option></select>
-  <input class="flt-n" type="number" placeholder="Min €" value="${S.tMin}" oninput="S.tMin=this.value;S.tPage=1;RENDER.tx()">
-  <input class="flt-n" type="number" placeholder="Max €" value="${S.tMax}" oninput="S.tMax=this.value;S.tPage=1;RENDER.tx()">
+  <input id="tmin" class="flt-n" type="number" placeholder="Min €" value="${S.tMin}" oninput="S.tMin=this.value;S.tPage=1;deb(RENDER.tx,'tmin')">
+  <input id="tmax" class="flt-n" type="number" placeholder="Max €" value="${S.tMax}" oninput="S.tMax=this.value;S.tPage=1;deb(RENDER.tx,'tmax')">
   <span class="res-ct">${l.length.toLocaleString()} tx · in <span style="color:var(--income-t)">${fmt0(ti)}</span> · out <span style="color:var(--expense-t)">${fmt0(te)}</span></span>
 </div>
 <table class="tbl"><thead><tr>
@@ -1047,7 +1192,7 @@ ${(function(){
 })()}
 <div style="display:flex;gap:8px;margin-bottom:6px">
   <button class="btn btn-sm ${rec?'btn-sec':'btn-primary'}" onclick="setRec('${v.id}',${!rec});vendorModal(${idx})">${rec?'&#8856; Mark not recurring':'&#8635; Mark as recurring'}</button>
-  ${['active','review','cancelled'].map(s=>`<button class="btn btn-sm btn-sec" onclick="setSt('${v.id}','${s}');vendorModal(${idx})">Set ${s}</button>`).join('')}
+  ${['active','review','cancelled','completed'].map(s=>`<button class="btn btn-sm btn-sec" onclick="setSt('${v.id}','${s}');vendorModal(${idx})">Set ${s}</button>`).join('')}
 </div>
 <div style="font-size:11px;color:var(--dimmed);margin:10px 0 2px">Monthly spend · last 24 months</div>
 <div class="spark">${spark}</div>
@@ -1106,7 +1251,7 @@ RENDER.ltd=function(){
   <div class="chart-card" style="display:flex;flex-direction:column">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
       <div style="flex:1"><div class="sec-t">All Lifetime Deals</div><div class="sec-s">One-off payments, lifetime products — kept out of the monthly burn figures</div></div>
-      <div class="srch"><span class="si">&#128269;</span><input placeholder="Search deals…" value="${esc(LTD_Q)}" oninput="LTD_Q=this.value;RENDER.ltd()"></div>
+      <div class="srch"><span class="si">&#128269;</span><input id="srch-ltd" placeholder="Search deals…" value="${esc(LTD_Q)}" oninput="LTD_Q=this.value;deb(RENDER.ltd,'srch-ltd')"></div>
     </div>
     <div style="overflow-y:auto;max-height:52vh">
     <table class="tbl"><thead><tr>
@@ -1258,6 +1403,11 @@ function answer(q,raw){
   // set deepseek key
   let mk=raw.match(/set deepseek key\s+(sk-\S+)/i);
   if(mk){localStorage.setItem('wv_dskey',mk[1]);botSay('DeepSeek key saved — AI answers are now enabled.');return;}
+  // set turso creds
+  mk=raw.match(/set turso url\s+(\S+)/i);
+  if(mk){localStorage.setItem('wv_turso_url',mk[1]);botSay('Turso URL saved. Now: <span class="hl">set turso token …</span>');return;}
+  mk=raw.match(/set turso token\s+(\S+)/i);
+  if(mk){localStorage.setItem('wv_turso_token',mk[1]);botSay('Turso token saved — reloading sync…');cloudBoot();return;}
   // set finnhub key
   mk=raw.match(/set finnhub key\s+(\S+)/i);
   if(mk){localStorage.setItem('wv_fhkey',mk[1]);botSay('Finnhub key saved — stock/ETF search and live quotes enabled. Try <span class="hl">add holding AAPL 25</span>.');return;}
@@ -1409,6 +1559,7 @@ function aiDigest(){
 async function aiCall(messages,model){
   const r=await fetch('https://api.deepseek.com/chat/completions',{
     method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+DSKEY()},
+    signal:(AbortSignal&&AbortSignal.timeout)?AbortSignal.timeout(model==='deepseek-reasoner'?180000:90000):undefined,
     body:JSON.stringify({model:model||'deepseek-chat',messages,max_tokens:1200,temperature:0.2})});
   if(r.status===401)throw new Error('KEY');
   if(!r.ok)throw new Error('HTTP '+r.status);
@@ -1436,7 +1587,9 @@ async function aiAsk(question){
   }catch(e){
     w.innerHTML=e.message==='KEY'
       ?'&#9888; DeepSeek rejected the key. Update it with <span class="hl">set deepseek key sk-…</span>'
-      :`&#9888; Couldn't reach DeepSeek (${esc(e.message)}). This works when the app runs from your own PC (saved HTML file); the claude.ai artifact viewer blocks outside calls.`;
+      :(e.name==='TimeoutError'||/timeout/i.test(e.message||''))
+        ?'&#9888; DeepSeek timed out (90s). Try again — or the network/CORS is blocking it. Check the browser console (F12) and paste any red error to the dev chat.'
+        :`&#9888; Couldn't reach DeepSeek (${esc(e.message||e.name)}). Run via http://localhost (run-wealthview.bat), not file:// — and check F12 console for the exact error.`;
   }
   log.scrollTop=log.scrollHeight;
 }
@@ -1456,7 +1609,9 @@ async function aiAnomalies(){
   }catch(e){
     w.innerHTML=e.message==='KEY'
       ?'&#9888; DeepSeek rejected the key.'
-      :`&#9888; Couldn't reach DeepSeek (${esc(e.message)}). Run the saved HTML from your PC — the artifact viewer blocks outside calls.`;
+      :(e.name==='TimeoutError'||/timeout/i.test(e.message||''))
+        ?'&#9888; Deep scan timed out (3 min) — the reasoning model can be slow at peak. Try again, or ask the question in plain chat (uses the faster model).'
+        :`&#9888; Couldn't reach DeepSeek (${esc(e.message||e.name)}). Run via http://localhost and check the F12 console for the exact error.`;
   }
   log.scrollTop=log.scrollHeight;
 }
@@ -1493,6 +1648,72 @@ async function syncWallet(){
   }
 }
 
+// ═════════════ DEV NOTES ═════════════
+function noteBadge(){const e=document.getElementById('nb-ct');if(!e)return;const n=S.notes.filter(x=>x.status!=='done').length;e.textContent=n||'';e.style.display=n?'':'none';}
+function noteOpen(){
+  const pop=document.getElementById('note-pop');
+  document.getElementById('note-ctx').textContent='on: '+(TITLES[S.view]?TITLES[S.view][1]:S.view);
+  pop.style.display='block';
+  const t=document.getElementById('note-txt');t.value='';setTimeout(()=>t.focus(),40);
+}
+function noteClose(){document.getElementById('note-pop').style.display='none';}
+function noteSave(){
+  const txt=document.getElementById('note-txt').value.trim();
+  if(!txt){toast('Empty note','#F59E0B');return;}
+  S.notes.unshift({id:'n'+Math.random().toString(36).slice(2,9),text:txt,
+    view:TITLES[S.view]?TITLES[S.view][1]:S.view,sev:document.getElementById('note-sev').value,
+    status:'todo',at:new Date().toISOString().slice(0,16).replace('T',' ')});
+  save();noteClose();noteBadge();toast('Note saved — see Dev Notes');
+  if(S.view==='notes')RENDER.notes();
+}
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape')noteClose();
+  const typing=/INPUT|TEXTAREA|SELECT/.test(document.activeElement&&document.activeElement.tagName||'');
+  if((e.key==='n'||e.key==='N')&&!typing&&!e.ctrlKey&&!e.metaKey){e.preventDefault();noteOpen();}
+  if(e.key==='Enter'&&e.ctrlKey&&document.getElementById('note-pop').style.display==='block')noteSave();
+});
+const SEV_META={bug:['&#128027;','#EF4444'],data:['&#128202;','#F59E0B'],idea:['&#128161;','#22C55E'],ui:['&#127912;','#8B5CF6']};
+RENDER.notes=function(){
+  const el=document.getElementById('view-notes');
+  const cols=[['todo','To Do'],['doing','In Progress'],['done','Done']];
+  const card=n=>{const[ic,c]=SEV_META[n.sev]||['&#9998;','#6B7280'];
+    return `<div class="card" style="padding:12px 14px;margin-bottom:9px">
+<div style="display:flex;align-items:flex-start;gap:8px"><span style="font-size:14px">${ic}</span>
+<div style="flex:1;min-width:0"><div style="font-size:13px;line-height:1.45;white-space:pre-wrap">${esc(n.text)}</div>
+<div style="font-size:10.5px;color:var(--dimmed);margin-top:6px">${esc(n.view)} · ${esc(n.at)}</div></div>
+<button class="a-del" onclick="delNote('${n.id}')">&#10005;</button></div>
+<div style="display:flex;gap:6px;margin-top:9px">${cols.filter(([k])=>k!==n.status).map(([k,l])=>`<button class="btn btn-sm btn-sec" style="font-size:11px;height:25px" onclick="moveNote('${n.id}','${k}')">${k==='done'?'&#10003; ':''}${l}</button>`).join('')}</div></div>`;};
+  el.innerHTML=`
+<div class="filter-bar">
+  <button class="btn btn-primary" onclick="noteOpen()">&#9998; Add note</button>
+  <button class="btn btn-sec" onclick="notesExport()">&#128203; Copy for dev</button>
+  <button class="btn btn-sec" onclick="notesDownload()">&#8615; Download .md</button>
+  ${S.notes.some(n=>n.status==='done')?`<button class="btn btn-ghost btn-sm" onclick="if(confirm('Clear all DONE notes?')){S.notes=S.notes.filter(n=>n.status!=='done');save();noteBadge();RENDER.notes();}">Clear done</button>`:''}
+  <span class="res-ct">${S.notes.length} notes · press <b>N</b> anywhere to add · export &#8594; paste into the dev chat</span>
+</div>
+${S.notes.length===0?`<div class="empty"><div class="empty-ic">&#9998;</div><div style="max-width:420px">No notes yet. Browse the app, hit the purple &#9998; button (or press <b>N</b>) whenever something looks wrong — it tags the page automatically. Then export the lot here and paste it back to Claude.</div></div>`
+:`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:18px">${cols.map(([k,l])=>`<div><div class="sec-hdr"><div class="sec-t" style="font-size:13.5px;color:${k==='done'?'var(--income-t)':k==='doing'?'var(--warn)':'var(--text)'}">${l} (${S.notes.filter(n=>n.status===k).length})</div></div>${S.notes.filter(n=>n.status===k).map(card).join('')||'<div style="color:var(--dimmed);font-size:12px;padding:8px">—</div>'}</div>`).join('')}</div>`}`;
+};
+function moveNote(id,st){const n=S.notes.find(x=>x.id===id);if(!n)return;n.status=st;save();noteBadge();RENDER.notes();}
+function delNote(id){S.notes=S.notes.filter(x=>x.id!==id);save();noteBadge();RENDER.notes();}
+function notesMd(){
+  const secs=[['todo','TO DO'],['doing','IN PROGRESS'],['done','DONE']];
+  let md='# Wealthview — dev notes export\n_'+new Date().toISOString().slice(0,16).replace('T',' ')+' · '+S.notes.length+' notes_\n';
+  secs.forEach(([k,l])=>{const ns=S.notes.filter(n=>n.status===k);if(!ns.length)return;
+    md+='\n## '+l+'\n';
+    ns.forEach(n=>{md+='- **['+n.sev+'] '+n.view+'** ('+n.at+'): '+n.text.replace(/\n/g,' / ')+'\n';});});
+  return md;
+}
+function notesExport(){
+  const md=notesMd();
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(md).then(()=>toast('Copied — paste into the dev chat')).catch(()=>{notesDownload();});}
+  else notesDownload();
+}
+function notesDownload(){
+  const a=Object.assign(document.createElement('a'),{href:'data:text/markdown;charset=utf-8,'+encodeURIComponent(notesMd()),download:'wealthview-notes.md'});
+  a.click();toast('Notes downloaded');
+}
+
 // ═════════════ EXPORT ═════════════
 function dl(rows,fn){const csv=rows.map(r=>r.map(v=>`"${String(v==null?'':v).replace(/"/g,'""')}"`).join(',')).join('\n');
   const a=Object.assign(document.createElement('a'),{href:'data:text/csv;charset=utf-8,'+encodeURIComponent(csv),download:fn});a.click();toast(`Exported ${rows.length-1} rows`);}
@@ -1502,6 +1723,8 @@ function xRun(){const l=runList();dl([['Vendor','Group','Charges','First','Last'
 // ═════════════ BOOT ═════════════
 rebuild();
 nav('dashboard');
+noteBadge();
+cloudBoot();
 </script>
 </body>
 </html>
