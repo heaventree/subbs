@@ -1,4 +1,4 @@
-import { LayoutDashboard, List, Building2, RefreshCw, Landmark, Settings2, AppWindow } from 'lucide-react'
+import { LayoutDashboard, List, Building2, RefreshCw, Landmark, Settings2, AppWindow, UploadCloud } from 'lucide-react'
 import { useApp } from '../lib/store'
 import clsx from 'clsx'
 
@@ -8,6 +8,10 @@ const NAV = [
   { id: 'vendors', label: 'Vendors', icon: Building2 },
   { id: 'subscriptions', label: 'Subscriptions', icon: RefreshCw },
   { id: 'networth', label: 'Net Worth', icon: Landmark },
+]
+
+const DATA_NAV = [
+  { id: 'import', label: 'Import', icon: UploadCloud },
 ]
 
 export function Shell({ children, title, sub, actions }: {
@@ -36,6 +40,20 @@ export function Shell({ children, title, sub, actions }: {
             <span className="ml-auto text-[9px] font-semibold text-warn border border-warn/40 rounded px-1">ALL FEATURES</span>
           </a>
           {NAV.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              onClick={() => setPage(id)}
+              className={clsx(
+                'w-full flex items-center gap-3 h-9 px-3 rounded-lg text-sm transition-colors',
+                page === id ? 'bg-accent/10 text-ink font-medium' : 'text-muted hover:bg-surface hover:text-ink',
+              )}
+            >
+              <Icon size={15} className={page === id ? 'text-accent-hover' : ''} />
+              {label}
+            </button>
+          ))}
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-dimmed px-3 mb-2 mt-5">Data</div>
+          {DATA_NAV.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               onClick={() => setPage(id)}
