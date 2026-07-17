@@ -210,6 +210,21 @@ CREATE TABLE nw_snapshot (
   UNIQUE (snap_date)
 );
 
+-- ── Investment holdings (stocks, ETFs, crypto) ──────────────────────────────
+CREATE TABLE holding (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  entity_id   uuid REFERENCES entity(id),
+  ticker      text NOT NULL,
+  name        text NOT NULL,
+  units       numeric(20,8) NOT NULL,
+  currency    char(3) NOT NULL DEFAULT 'USD',
+  last_price  numeric(16,4),
+  price_at    date,
+  price_src   text,                -- coingecko|finnhub|manual
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  deleted_at  timestamptz
+);
+
 -- ── AppSumo / lifetime deals (kept out of monthly burn) ─────────────────────
 CREATE TABLE lifetime_deal (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),

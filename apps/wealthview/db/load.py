@@ -74,7 +74,7 @@ def main():
         cat_by_idx = [c['name'] for c in cats]
         inserted = skipped = 0
         for row in tx:
-            d, vidx, amt, cidx, typ, rec = row
+            d, vidx, amt, cidx, typ, rec = row[:6]
             kind = {'i': 'income', 'x': 'transfer'}.get(typ, 'expense')
             direction = 'in' if typ == 'i' else 'out'
             f = fp(d, vidx, amt, cidx, typ)

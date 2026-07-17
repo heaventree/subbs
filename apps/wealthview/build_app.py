@@ -249,6 +249,7 @@ select.form-in{cursor:pointer}
 const RAW=__DATA__;
 const BFKEY=localStorage.getItem('wv_bfkey')||'__BFKEY__';
 const DSKEY=()=>localStorage.getItem('wv_dskey')||'__DSKEY__';
+const FHKEY=()=>localStorage.getItem('wv_fhkey')||'';
 const LOGOC={};
 
 // Expand compact tx: [date, vendorIdx, amount, catIdx, type, recurring]
@@ -315,6 +316,8 @@ const S={view:'dashboard',range:12,vSearch:'',vType:'e',vSort:'total',
   rec:JSON.parse(localStorage.getItem('wv_rec')||'{}'),       // vendor recurring overrides
   rules:JSON.parse(localStorage.getItem('wv_rules')||'[]'),
   assets:JSON.parse(localStorage.getItem('wv_assets')||'[]'),
+  holdings:JSON.parse(localStorage.getItem('wv_holdings')||'[]'),  // {id,ticker,name,shares,ccy,price,priceAt,src}
+  fx:JSON.parse(localStorage.getItem('wv_fx')||'{}'),              // {USD:0.92,...} to EUR
   nwHist:JSON.parse(localStorage.getItem('wv_nwhist')||'[]'),
   rSearch:'',rGroup:'',rMin:3,rSort:'avg',rDir:-1,
   owner:JSON.parse(localStorage.getItem('wv_owner')||'{}'),   // vendorId -> heaventree|personal
@@ -323,7 +326,7 @@ const S={view:'dashboard',range:12,vSearch:'',vType:'e',vSort:'total',
   tSearch:'',tType:'all',tGroup:'',tCat:'',tYear:'',tMin:'',tMax:'',tRec:'',tPage:1,tSort:'d',tDir:-1,
   cfYear:'',
 };
-function save(){['ov','rec','rules','assets','nwHist','owner'].forEach(k=>localStorage.setItem('wv_'+(k==='nwHist'?'nwhist':k),JSON.stringify(S[k])));localStorage.setItem('wv_amtmode',S.amtMode);}
+function save(){['ov','rec','rules','assets','nwHist','owner','holdings','fx'].forEach(k=>localStorage.setItem('wv_'+(k==='nwHist'?'nwhist':k),JSON.stringify(S[k])));localStorage.setItem('wv_amtmode',S.amtMode);}
 
 // ═════════════ HELPERS ═════════════
 const fmt=n=>new Intl.NumberFormat('en-IE',{style:'currency',currency:'EUR',minimumFractionDigits:2}).format(n);
@@ -430,7 +433,7 @@ function nav(v){
   if(v==='tx')ac.innerHTML=`<button class="btn btn-sec" onclick="xTx()">&#8615; Export CSV</button>`;
   else if(v==='running')ac.innerHTML=`<button class="btn btn-sec" onclick="xRun()">&#8615; Export CSV</button>`;
   else if(v==='rules')ac.innerHTML=`<button class="btn btn-primary" onclick="applyRules()">&#9658; Apply rules</button>`;
-  else if(v==='networth')ac.innerHTML=`<button class="btn btn-primary" onclick="addAssetModal()">+ Add asset / liability</button>`;
+  else if(v==='networth')ac.innerHTML=`<button class="btn btn-sec" onclick="refreshPrices()">&#8635; Refresh prices</button><button class="btn btn-sec" onclick="addHoldingModal()">+ Holding</button><button class="btn btn-primary" onclick="addAssetModal()">+ Asset / liability</button>`;
   else ac.innerHTML='';
   RENDER[v]();
 }
@@ -521,8 +524,11 @@ RENDER.dashboard=function(){
 };
 
 // ═════════════ NET WORTH ═════════════
+function fxToEur(ccy){if(!ccy||ccy==='EUR')return 1;return S.fx[ccy]||({USD:0.92,GBP:1.17}[ccy]||1);}
+function holdingVal(h){return (h.shares||0)*(h.price||0)*fxToEur(h.ccy);}
+function holdingsTotal(){return sum(S.holdings,holdingVal);}
 function nwTotal(){
-  const a=sum(S.assets.filter(x=>x.kind==='asset'),x=>x.value);
+  const a=sum(S.assets.filter(x=>x.kind==='asset'),x=>x.value)+holdingsTotal();
   const l=sum(S.assets.filter(x=>x.kind==='liability'),x=>x.value);
   return{assets:a,liab:l,net:a-l};
 }
@@ -534,6 +540,107 @@ function snapNW(){
   if(S.nwHist.length>400)S.nwHist=S.nwHist.slice(-400);
   save();
 }
+// ── Investments: search + live prices ───────────────────────────────────────
+// Providers (all called from YOUR browser, never from a server):
+//   crypto  -> CoinGecko (keyless)         stocks/ETFs -> Finnhub (free key)
+//   FX      -> Frankfurter/ECB (keyless)   manual price override always wins
+const CRYPTO={BTC:'bitcoin',ETH:'ethereum',SOL:'solana',XRP:'ripple',ADA:'cardano',
+  DOGE:'dogecoin',LTC:'litecoin',DOT:'polkadot',LINK:'chainlink',XAU:'pax-gold'};
+async function fetchFx(){
+  try{
+    const r=await fetch('https://api.frankfurter.app/latest?from=EUR&to=USD,GBP,CHF');
+    if(!r.ok)throw 0;
+    const j=await r.json();
+    Object.entries(j.rates||{}).forEach(([c,v])=>{S.fx[c]=1/v;});
+    save();return true;
+  }catch(e){return false;}
+}
+async function priceOne(h){
+  const t=(h.ticker||'').toUpperCase();
+  if(CRYPTO[t]){
+    const r=await fetch('https://api.coingecko.com/api/v3/simple/price?ids='+CRYPTO[t]+'&vs_currencies=eur');
+    if(!r.ok)throw new Error('CoinGecko '+r.status);
+    const j=await r.json();const p=j[CRYPTO[t]]&&j[CRYPTO[t]].eur;
+    if(!p)throw new Error('no price');
+    h.price=p;h.ccy='EUR';h.priceAt=new Date().toISOString().slice(0,10);h.src='coingecko';return;
+  }
+  if(!FHKEY())throw new Error('NOKEY');
+  const r=await fetch('https://finnhub.io/api/v1/quote?symbol='+encodeURIComponent(t)+'&token='+FHKEY());
+  if(r.status===401||r.status===403)throw new Error('KEY');
+  if(!r.ok)throw new Error('Finnhub '+r.status);
+  const j=await r.json();
+  if(!j.c)throw new Error('no price for '+t);
+  h.price=j.c;h.priceAt=new Date().toISOString().slice(0,10);h.src='finnhub';
+  if(!h.ccy)h.ccy='USD';
+}
+async function refreshPrices(){
+  if(!S.holdings.length){toast('No holdings yet','#F59E0B');return;}
+  toast('Refreshing prices…');
+  await fetchFx();
+  let ok=0,fail=0,lastErr='';
+  for(const h of S.holdings){
+    if(h.manual)continue;
+    try{await priceOne(h);ok++;}catch(e){fail++;lastErr=e.message;}
+  }
+  save();snapNW();RENDER.networth();
+  if(fail===0)toast(`Prices updated (${ok})`);
+  else if(lastErr==='NOKEY')toast('Crypto priced. Stocks need a free Finnhub key — see Assistant: set finnhub key …','#F59E0B');
+  else if(lastErr==='KEY')toast('Finnhub rejected the key','#F87171');
+  else toast(`${ok} updated, ${fail} failed (${lastErr}) — offline viewers can set prices manually`,'#F59E0B');
+}
+function addHoldingModal(){
+  openModal(`<div class="modal-hd"><div class="sec-t">Add holding</div><button class="modal-x" onclick="closeModal()">&#10005;</button></div>
+<div class="modal-bd">
+  <div class="srch" style="margin-bottom:10px"><span class="si">&#128269;</span><input class="form-in" id="h-q" placeholder="Search ticker or company (needs Finnhub key)…" style="padding-left:32px" oninput="hSearch()"></div>
+  <div id="h-results" style="max-height:180px;overflow-y:auto;margin-bottom:12px"></div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+    <div class="form-grp"><div class="form-l">Ticker</div><input class="form-in" id="h-tk" placeholder="AAPL / VUSA.L / BTC"></div>
+    <div class="form-grp"><div class="form-l">Name</div><input class="form-in" id="h-nm" placeholder="Apple Inc"></div>
+    <div class="form-grp"><div class="form-l">Shares / units</div><input class="form-in" id="h-sh" type="number" step="any" placeholder="25"></div>
+    <div class="form-grp"><div class="form-l">Currency</div><select class="form-in" id="h-cc"><option>USD</option><option>EUR</option><option>GBP</option><option>CHF</option></select></div>
+    <div class="form-grp"><div class="form-l">Price (blank = fetch live)</div><input class="form-in" id="h-pr" type="number" step="any" placeholder="auto"></div>
+  </div>
+  <div style="font-size:11px;color:var(--dimmed);margin-bottom:10px">Crypto tickers (BTC, ETH, XAU…) price keylessly via CoinGecko. Stocks/ETFs use a free finnhub.io key — say <span style="color:var(--accent-h)">set finnhub key …</span> in the Assistant.</div>
+  <button class="btn btn-primary" onclick="addHolding()">Add holding</button>
+</div>`);
+  setTimeout(()=>document.getElementById('h-q')?.focus(),60);
+}
+let _hst=null;
+function hSearch(){
+  clearTimeout(_hst);
+  _hst=setTimeout(async()=>{
+    const q=document.getElementById('h-q')?.value.trim();
+    const box=document.getElementById('h-results');if(!box)return;
+    if(!q){box.innerHTML='';return;}
+    const cy=Object.keys(CRYPTO).filter(c=>c.startsWith(q.toUpperCase()));
+    let html=cy.map(c=>`<div class="ri" style="cursor:pointer;padding:7px 10px" onclick="hPick('${c}','${c} (crypto)','EUR')"><div class="ri-info"><div class="ri-name">${c} <span style="color:var(--dimmed);font-size:11px">crypto · CoinGecko</span></div></div></div>`).join('');
+    if(!FHKEY()){box.innerHTML=html+'<div style="font-size:11.5px;color:var(--dimmed);padding:6px 10px">Stock search needs a Finnhub key — or fill the fields manually below.</div>';return;}
+    try{
+      const r=await fetch('https://finnhub.io/api/v1/search?q='+encodeURIComponent(q)+'&token='+FHKEY());
+      const j=await r.json();
+      html+=(j.result||[]).slice(0,8).map(x=>`<div class="ri" style="cursor:pointer;padding:7px 10px" onclick="hPick('${esc(x.symbol)}','${esc((x.description||'').replace(/'/g,''))}','USD')"><div class="ri-info"><div class="ri-name">${esc(x.symbol)} <span style="color:var(--dimmed);font-size:11px">${esc(x.type||'')}</span></div><div class="ri-cat">${esc(x.description||'')}</div></div></div>`).join('');
+      box.innerHTML=html||'<div style="color:var(--muted);font-size:12px;padding:8px">No matches.</div>';
+    }catch(e){box.innerHTML=html+'<div style="color:var(--warn);font-size:11.5px;padding:6px 10px">Search unreachable — fill manually below.</div>';}
+  },350);
+}
+function hPick(tk,nm,cc){document.getElementById('h-tk').value=tk;document.getElementById('h-nm').value=nm;document.getElementById('h-cc').value=cc;document.getElementById('h-sh').focus();}
+async function addHolding(){
+  const tk=document.getElementById('h-tk').value.trim().toUpperCase();
+  const sh=parseFloat(document.getElementById('h-sh').value);
+  if(!tk||!(sh>0)){toast('Ticker and share count required','#F59E0B');return;}
+  const h={id:'h'+Math.random().toString(36).slice(2,9),ticker:tk,
+    name:document.getElementById('h-nm').value.trim()||tk,shares:sh,
+    ccy:document.getElementById('h-cc').value,price:parseFloat(document.getElementById('h-pr').value)||0,
+    priceAt:new Date().toISOString().slice(0,10),src:'manual',manual:!!parseFloat(document.getElementById('h-pr').value)};
+  S.holdings.push(h);save();closeModal();
+  if(!h.price){try{await fetchFx();await priceOne(h);save();toast(`${tk}: ${fmt(holdingVal(h))} added`);}catch(e){toast(e.message==='NOKEY'?'Added — set a Finnhub key or a manual price to value it':'Added — price fetch failed, set manually','#F59E0B');}}
+  snapNW();RENDER.networth();
+}
+function updHolding(id,field,val){const h=S.holdings.find(x=>x.id===id);if(!h)return;
+  h[field]=parseFloat(val)||0;if(field==='price'){h.manual=true;h.src='manual';h.priceAt=new Date().toISOString().slice(0,10);}
+  save();snapNW();RENDER.networth();}
+function delHolding(id){S.holdings=S.holdings.filter(h=>h.id!==id);save();snapNW();RENDER.networth();toast('Holding removed','#F87171');}
+
 const AICONS={property:'&#127968;',cash:'&#128176;',investment:'&#128200;',vehicle:'&#128663;',business:'&#127970;',pension:'&#127793;',other:'&#128188;',mortgage:'&#127974;',loan:'&#128179;',credit:'&#128181;'};
 RENDER.networth=function(){
   const el=document.getElementById('view-networth');
@@ -554,9 +661,21 @@ RENDER.networth=function(){
   el.innerHTML=`
 <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
   <div class="kpi accent"><div class="kpi-l" style="color:var(--accent-h)">Net Worth</div><div class="kpi-v mono" style="font-size:26px">${fmt0(t.net)}</div></div>
-  <div class="kpi"><div class="kpi-l">Total Assets</div><div class="kpi-v mono" style="color:var(--income-t)">${fmt0(t.assets)}</div><div class="kpi-s">${assets.length} items</div></div>
+  <div class="kpi"><div class="kpi-l">Total Assets</div><div class="kpi-v mono" style="color:var(--income-t)">${fmt0(t.assets)}</div><div class="kpi-s">${assets.length} items + ${S.holdings.length} holdings (${fmt0(holdingsTotal())})</div></div>
   <div class="kpi"><div class="kpi-l">Total Liabilities</div><div class="kpi-v mono" style="color:var(--expense-t)">${fmt0(t.liab)}</div><div class="kpi-s">${liabs.length} items</div></div>
 </div>
+${(function(){
+  const hs=S.holdings;
+  const rows=hs.map(h=>`<tr>
+<td><div style="display:flex;align-items:center;gap:9px"><div class="av" style="width:28px;height:28px;border-radius:7px;background:${CRYPTO[h.ticker]?'#F7931A1F':'#3B82F61F'};color:${CRYPTO[h.ticker]?'#F7931A':'#60A5FA'};font-size:10px;font-weight:700">${esc(h.ticker.slice(0,4))}</div><div style="min-width:0"><div style="font-weight:500;font-size:12.5px">${esc(h.name)}</div><div style="font-size:10.5px;color:var(--dimmed)">${h.src==='manual'?'manual price':esc(h.src)} · ${fmtD(h.priceAt)}</div></div></div></td>
+<td><input type="number" step="any" value="${h.shares}" onchange="updHolding('${h.id}','shares',this.value)" style="width:90px;height:29px;padding:0 8px;background:var(--canvas);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;text-align:right;outline:none" class="mono"></td>
+<td><div style="display:flex;align-items:center;gap:4px"><input type="number" step="any" value="${h.price||''}" placeholder="—" onchange="updHolding('${h.id}','price',this.value)" style="width:95px;height:29px;padding:0 8px;background:var(--canvas);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;text-align:right;outline:none" class="mono"><span style="font-size:10.5px;color:var(--dimmed)">${h.ccy}</span></div></td>
+<td class="mono" style="font-weight:600;font-size:13px;color:var(--income-t)">${fmt0(holdingVal(h))}</td>
+<td><button class="a-del" onclick="delHolding('${h.id}')">&#10005;</button></td></tr>`).join('');
+  return `<div style="margin-bottom:20px"><div class="sec-hdr"><div><div class="sec-t">Investments &amp; Crypto</div><div class="sec-s">Live prices: crypto via CoinGecko (keyless) · stocks/ETFs via Finnhub · FX via ECB · manual override anytime</div></div><div style="display:flex;gap:8px"><button class="btn btn-sm btn-sec" onclick="refreshPrices()">&#8635; Refresh</button><button class="btn btn-sm btn-primary" onclick="addHoldingModal()">+ Holding</button></div></div>
+  ${hs.length?`<div class="card" style="padding:8px 14px"><table class="tbl"><thead><tr><th>Holding</th><th>Units</th><th>Price</th><th>Value EUR</th><th></th></tr></thead><tbody>${rows}</tbody></table><div style="display:flex;justify-content:flex-end;padding:10px 4px 4px;font-size:13px;gap:8px"><span style="color:var(--muted)">Portfolio total</span><span class="mono" style="font-weight:700;color:var(--income-t)">${fmt0(holdingsTotal())}</span></div></div>`
+  :`<div class="card" style="display:flex;align-items:center;gap:12px;color:var(--muted);font-size:13px"><span style="font-size:22px">&#128200;</span><span>No holdings yet. Add shares, ETFs or crypto (BTC, ETH, XAU…) — enter units, prices fetch live, value feeds straight into net worth.</span></div>`}</div>`;
+})()}
 <div class="nw-grid">
   <div><div class="sec-hdr"><div class="sec-t" style="color:var(--income-t)">Assets</div></div>${assets.map(row).join('')||'<div class="empty"><div class="empty-ic">&#127968;</div><div>No assets yet — add your house value, savings, investments…</div></div>'}</div>
   <div><div class="sec-hdr"><div class="sec-t" style="color:var(--expense-t)">Liabilities</div></div>${liabs.map(row).join('')||'<div class="empty"><div class="empty-ic">&#127974;</div><div>No liabilities — add mortgage, loans, credit balances…</div></div>'}</div>
@@ -1142,11 +1261,27 @@ function answer(q,raw){
 &#8226; <span class="hl">assign brennan to personal</span> — Heaventree / Personal split<br>
 &#8226; <span class="hl">rename 13133 zuric to Zurich Mortgage Cover</span><br>
 &#8226; <span class="hl">merge the aa into aa ireland</span> — combine duplicate vendors<br>
+&#8226; <span class="hl">add holding AAPL 25</span> / <span class="hl">add holding BTC 0.5</span> · <span class="hl">refresh prices</span><br>
+&#8226; <span class="hl">set finnhub key …</span> — free key from finnhub.io for stock quotes<br>
 &#8226; <span class="hl">sync wallet</span> — pull latest from BudgetBakers<br>
 &#8226; Anything else goes to <span class="hl">DeepSeek AI</span> (trends, anomalies, advice) when a key is set`);return;}
   // set deepseek key
   let mk=raw.match(/set deepseek key\s+(sk-\S+)/i);
   if(mk){localStorage.setItem('wv_dskey',mk[1]);botSay('DeepSeek key saved — AI answers are now enabled.');return;}
+  // set finnhub key
+  mk=raw.match(/set finnhub key\s+(\S+)/i);
+  if(mk){localStorage.setItem('wv_fhkey',mk[1]);botSay('Finnhub key saved — stock/ETF search and live quotes enabled. Try <span class="hl">add holding AAPL 25</span>.');return;}
+  // add holding TICKER QTY
+  mk=q.match(/add holding\s+([a-z0-9.\-]+)\s+([\d.]+)/);
+  if(mk){const tk=mk[1].toUpperCase(),sh=parseFloat(mk[2]);
+    const h={id:'h'+Math.random().toString(36).slice(2,9),ticker:tk,name:tk,shares:sh,ccy:CRYPTO[tk]?'EUR':'USD',price:0,priceAt:'',src:'manual'};
+    S.holdings.push(h);save();
+    botSay(`Added <span class="hl">${sh} × ${tk}</span>. Fetching price…`);
+    fetchFx().then(()=>priceOne(h)).then(()=>{save();snapNW();botSay(`${tk}: ${fmt(h.price)} ${h.ccy} → holding worth <span class="hl mono">${fmt0(holdingVal(h))}</span>. Net worth now ${fmt0(nwTotal().net)}.`);})
+      .catch(e=>botSay(e.message==='NOKEY'?'Stocks need a Finnhub key (<span class="hl">set finnhub key …</span>) — or set a manual price on the Net Worth page.':`Price fetch failed: ${esc(e.message)}. Set a manual price on the Net Worth page.`));
+    return;}
+  // refresh prices
+  if(/refresh prices|update prices/.test(q)){nav('networth');refreshPrices();return;}
   // rename vendor
   mk=raw.match(/rename\s+(.+?)\s+to\s+(.+)/i);
   if(mk){const v=findVendor(mk[1]);if(!v){botSay(`Couldn't find "${esc(mk[1])}".`);return;}
