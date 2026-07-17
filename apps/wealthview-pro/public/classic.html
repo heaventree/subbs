@@ -207,12 +207,14 @@ select.form-in{cursor:pointer}
       <div class="nav-item" data-v="tx" onclick="nav('tx')"><span class="ni">&#9776;</span>Transactions</div>
       <div class="nav-item" data-v="cats" onclick="nav('cats')"><span class="ni">&#9635;</span>Categories</div>
       <div class="nav-item" data-v="ltd" onclick="nav('ltd')"><span class="ni">&#9889;</span>Lifetime Deals</div>
+      <div class="nav-sec">Data</div>
+      <div class="nav-item" data-v="import" onclick="nav('import')"><span class="ni">&#8613;</span>Import</div>
       <div class="nav-sec">Tools</div>
       <div class="nav-item" data-v="rules" onclick="nav('rules')"><span class="ni">&#9881;</span>Rules Engine</div>
       <div class="nav-item" data-v="asst" onclick="nav('asst')"><span class="ni">&#10022;</span>Assistant</div>
       <div class="nav-item" data-v="notes" onclick="nav('notes')"><span class="ni">&#9998;</span>Dev Notes <span id="nb-ct" style="margin-left:auto;font-size:10.5px;background:var(--accent-12);color:var(--accent-h);border-radius:99px;padding:1px 7px"></span></div>
     </nav>
-    <div class="sb-user"><a href="/?pro=1" style="display:block;text-align:center;font-size:11px;color:var(--dimmed);padding:6px 0 2px;text-decoration:none" onmouseover="this.style.color='var(--accent-h)'" onmouseout="this.style.color='var(--dimmed)'">Try Pro (beta) &#8594;</a><div class="sb-user-in"><div class="av-user">SO</div><div style="min-width:0"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Sean O&#39;Byrne</div><div style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:5px">Heaventree Ltd. · <span style="color:var(--accent-h)">build 17.07-d</span> <span id="db-dot" style="width:7px;height:7px;border-radius:50%;background:#5B6373;display:inline-block" title="Turso"></span></div></div></div></div>
+    <div class="sb-user"><a href="/?pro=1" style="display:block;text-align:center;font-size:11px;color:var(--dimmed);padding:6px 0 2px;text-decoration:none" onmouseover="this.style.color='var(--accent-h)'" onmouseout="this.style.color='var(--dimmed)'">Try Pro (beta) &#8594;</a><div class="sb-user-in"><div class="av-user">SO</div><div style="min-width:0"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Sean O&#39;Byrne</div><div style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:5px">Heaventree Ltd. · <span style="color:var(--accent-h)">build 17.07-e</span> <span id="db-dot" style="width:7px;height:7px;border-radius:50%;background:#5B6373;display:inline-block" title="Turso"></span></div></div></div></div>
   </aside>
   <div id="main">
     <div class="topbar">
@@ -229,6 +231,7 @@ select.form-in{cursor:pointer}
       <div class="view" id="view-tx"></div>
       <div class="view" id="view-cats"></div>
       <div class="view" id="view-ltd"></div>
+      <div class="view" id="view-import"></div>
       <div class="view" id="view-rules"></div>
       <div class="view" id="view-notes"></div>
       <div class="view" id="view-asst" style="padding:0"></div>
@@ -292,6 +295,9 @@ function rebuild(){
     t.t=(ov&&t.t0!=='x')?ov:t.t0;             // income⇄expense fix follows the vendor
     (VTX[t.ve]=VTX[t.ve]||[]).push(i);
   });
+  // recompute in case an import added transactions in new months
+  MONTHS=[...new Set(TX.map(t=>t.d.slice(0,7)))].sort();
+  CURM=MONTHS[MONTHS.length-1];
   // monthly series follows the corrected types
   MONTHS.forEach(m=>{MSER[m]={inc:0,exp:0,xfer:0};});
   TX.forEach(t=>{const m=MSER[t.d.slice(0,7)];if(!m)return;if(t.t==='i')m.inc+=t.a;else if(t.t==='x')m.xfer+=t.a;else m.exp+=t.a;});
@@ -314,11 +320,13 @@ function rebuild(){
   });
 }
 
-// Month series (all months in range)
-const MONTHS=[...new Set(TX.map(t=>t.d.slice(0,7)))].sort();
+// Month series (all months in range) — MONTHS/CURM are `let` (not const) because
+// importing a CSV can add transactions outside the original range; rebuild()
+// recomputes both from the live TX array on every call.
+let MONTHS=[...new Set(TX.map(t=>t.d.slice(0,7)))].sort();
 const MSER={}; MONTHS.forEach(m=>MSER[m]={inc:0,exp:0,xfer:0});
 TX.forEach(t=>{const m=MSER[t.d.slice(0,7)];if(t.t==='i')m.inc+=t.a;else if(t.t==='x')m.xfer+=t.a;else m.exp+=t.a;});
-const CURM=MONTHS[MONTHS.length-1];
+let CURM=MONTHS[MONTHS.length-1];
 
 // ═════════════ STATE ═════════════
 const S2={
@@ -524,8 +532,14 @@ async function cloudBoot(){
         try{SYNC_SET[k](JSON.parse(v));SM[k]=ts;applied++;}catch(e){}
       }
     });
-    if(applied){smSave();save();saveS2();rebuild();if(RENDER[S.view])RENDER[S.view]();noteBadge();
-      toast('Synced '+applied+' change set'+(applied>1?'s':'')+' from cloud');}
+    let deltaAdded=0;
+    try{ deltaAdded=mergeLedgerDelta(await fetchDeltaTxns()); }
+    catch(e){ /* txn_delta may not exist yet (created lazily on first import) — not fatal */ }
+    if(applied||deltaAdded){smSave();save();saveS2();rebuild();if(RENDER[S.view])RENDER[S.view]();noteBadge();
+      const parts=[];
+      if(applied)parts.push(applied+' change set'+(applied>1?'s':''));
+      if(deltaAdded)parts.push(deltaAdded+' imported transaction'+(deltaAdded>1?'s':''));
+      toast('Synced '+parts.join(' + ')+' from cloud');}
     DB_OK=true;dbDot();
     schedulePush(); // push anything local the cloud lacks
   }catch(e){
@@ -533,11 +547,374 @@ async function cloudBoot(){
   }
 }
 
+// ═════════════ IMPORT (CSV → ledger) ═════════════
+// Same normalization rules used to build the original snapshot (prep_data.py),
+// ported faithfully so a freshly-parsed row classifies identically to how the
+// base 7,540 rows were classified. Keep in sync with normalize.ts (Pro's copy).
+const IMPORT_GROUP_CATS={
+  'AI & Software':['AI LICENSES','SOFTWARE/LICENSES','Software, apps, games','MICROSOFT',
+    'ACCOUNTING SOFTWARE','APPSUMO','SECURITY','PROJECT MANAGEMENT','CRM',
+    'EMAIL MARKETING','DESIGN SOFTWARE','STOCK IMAGES/VIDEO','PC/SOFTWARE'],
+  'Hosting & Domains':['HOSTING/SERVERS','DOMAIN REGISTRATION','CDN/SECURITY','WEBSITE SERVICES'],
+  'Business Ops':['SUB CONTRACTORS','Charges, Fees','ACCOUNTANCY','ADVERTISING','MARKETING',
+    'OFFICE SUPPLIES','POSTAGE','PRINTING','TRAINING','BANK FEES','LEGAL',
+    'Unknown expense','BUSINESS SERVICES','TELEPHONE'],
+  'Income':['Sale','Income','Interests, dividends','Refunds (tax, purchase)','Lending, renting',
+    'Gifts','Sale of financial assets','Rental income'],
+  'Savings & Investments':['Savings','Financial investments','Collections','Vehicles, chattels'],
+  'Family & Personal':['FAMILY','DRAWINGS','Charity, gifts','Life events','Kids',
+    'Clothes & shoes','Personal - other','Wellness, beauty'],
+  'Groceries & Food':['Groceries','Restaurant, fast-food','Food & Drinks','Bar, cafe','Takeaway'],
+  'Home & Utilities':['Internet','Maintenance, repairs','Energy, utilities','Home, garden',
+    'Rent','Mortgage','Furniture & Appliances','TV, Streaming','Phone, cell phone',
+    'Property insurance','Water'],
+  'Transport':['MOTOR FUEL','Transportation','Fuel','Vehicle maintenance','Parking',
+    'Public transport','Taxi','Car rental','Vehicle insurance','MOTOR/TRAVEL','Flights'],
+  'Amazon':['AMAZON'],
+  'Insurance & Loans':['Insurances','Loans, interests','Life insurance','Health insurance'],
+  'Health':['Health care, doctor','Medicaments','Pharmacy','Dentist','Eye care'],
+  'Pets':['Pets, animals'],
+  'Leisure':['Life & Entertainment','Holiday, trips, hotels','Culture, sport events','Hobbies',
+    'Active sport, fitness','Books, audio, subscriptions','Lottery, gambling',
+    'Alcohol, tobacco','Entertainment','TOOLS/EQUIPMENT'],
+  'Education':['Education, development','Books'],
+};
+const CAT2GROUP={};
+for(const g in IMPORT_GROUP_CATS)IMPORT_GROUP_CATS[g].forEach(c=>CAT2GROUP[c.toLowerCase()]=g);
+const DOMAIN_MAP=[
+  ['anthropic','anthropic.com'],['replit','replit.com'],['brixly','brixly.co.uk'],['enix','brixly.co.uk'],
+  ['netlify','netlify.com'],['openrouter','openrouter.ai'],['abacus','abacus.ai'],['eir ','eir.ie'],
+  ['gomo','gomo.ie'],['enterprise rent','enterprise.com'],['20i','20i.com'],['porkbun','porkbun.com'],
+  ['godaddy','godaddy.com'],['namecheap','namecheap.com'],['cloudflare','cloudflare.com'],
+  ['digitalocean','digitalocean.com'],['hetzner','hetzner.com'],['ovh','ovhcloud.com'],
+  ['microsoft','microsoft.com'],['google','google.com'],['apple','apple.com'],['amazon','amazon.com'],
+  ['amzn','amazon.com'],['aws','aws.amazon.com'],['stripe','stripe.com'],['paypal','paypal.com'],
+  ['wise','wise.com'],['revolut','revolut.com'],['adobe','adobe.com'],['canva','canva.com'],
+  ['figma','figma.com'],['github','github.com'],['gitlab','gitlab.com'],['openai','openai.com'],
+  ['midjourney','midjourney.com'],['elevenlabs','elevenlabs.io'],['zoho','zoho.com'],
+  ['mailchimp','mailchimp.com'],['sendgrid','sendgrid.com'],['twilio','twilio.com'],
+  ['shopify','shopify.com'],['wordpress','wordpress.com'],['elementor','elementor.com'],
+  ['envato','envato.com'],['appsumo','appsumo.com'],['paddle','paddle.com'],['gumroad','gumroad.com'],
+  ['lemon squeezy','lemonsqueezy.com'],['aldi','aldi.ie'],['lidl','lidl.ie'],['tesco','tesco.ie'],
+  ['dunnes','dunnesstores.com'],['supervalu','supervalu.ie'],['aviva','aviva.ie'],['vhi','vhi.ie'],
+  ['electric ireland','electricireland.ie'],['bord gais','bordgaisenergy.ie'],['vodafone','vodafone.ie'],
+  ['three','three.ie'],['sky ','sky.com'],['netflix','netflix.com'],['spotify','spotify.com'],
+  ['youtube','youtube.com'],['disney','disneyplus.com'],['audible','audible.com'],['kindle','amazon.com'],
+  ['temu','temu.com'],['ebay','ebay.com'],['etsy','etsy.com'],['ikea','ikea.com'],['argos','argos.ie'],
+  ['circle k','circlek.ie'],['applegreen','applegreen.ie'],['maxol','maxol.ie'],['texaco','texaco.com'],
+  ['ryanair','ryanair.com'],['aer lingus','aerlingus.com'],['booking','booking.com'],['airbnb','airbnb.com'],
+  ['lorka','lorka.ai'],['brizy','brizy.io'],['brainstorm','brizy.io'],['phantomwp','phantomwp.com'],
+  ['hostinger','hostinger.com'],['siteground','siteground.com'],['wpmu','wpmudev.com'],['kinsta','kinsta.com'],
+  ['notion','notion.so'],['slack','slack.com'],['zoom','zoom.us'],['dropbox','dropbox.com'],
+  ['cursor','cursor.com'],['vercel','vercel.com'],['supabase','supabase.com'],['railway','railway.app'],
+  ['render','render.com'],['fly.io','fly.io'],['deepseek','deepseek.com'],['perplexity','perplexity.ai'],
+  ['lovable','lovable.dev'],['bolt','bolt.new'],['v0','v0.dev'],['windsurf','codeium.com'],
+  ['cfs formations','cfsformations.com'],['friends first','friendsfirst.ie'],['pocketbase','pocketbase.io'],
+];
+const IBAN_RE=/,\s*([A-Z]{2}\d{2}[A-Z0-9]{4,}|\d{8,}).*$/i;
+const CARD_RE=/\s*(CARD-\d+|Card transaction.*)$/i;
+function cleanPayee(name){
+  let n=name.replace(IBAN_RE,'').trim();
+  n=n.replace(CARD_RE,'').trim();
+  n=n.replace(/\s+/g,' ');
+  return n||name;
+}
+const CHAINS=[['ie81ipbs','ptsb mortgage'],['ie43revo','revolut transfer'],
+  ['aldi','aldi'],['lidl','lidl'],['tesco','tesco'],['dunnes','dunnes stores'],
+  ['supervalu','supervalu'],['circle k','circle k'],['applegreen','applegreen'],
+  ['ptsb','ptsb mortgage'],['pstb','ptsb mortgage'],['humm','humm'],
+  ['electric ireland','electric ireland'],['thahira banu','thahira banu'],
+  ["sean padraig","sean padraig o'byrne"],["kaya quinlan","kaya quinlan o'byrne"],
+  ['bord gais','bord gais'],['vodafone','vodafone'],['an post','an post'],
+  ['revenue','revenue commissioners'],['aviva','aviva'],['wise','wise'],
+  ['mcdonald','mcdonalds'],['supermac','supermacs'],['boots','boots'],
+  ['centra','centra'],['spar ','spar'],['costa','costa coffee'],
+  ['starbucks','starbucks'],['penneys','penneys'],['ikea','ikea'],
+  ['woodie','woodies'],['screwfix','screwfix'],['harvey norman','harvey norman'],
+  ['currys','currys'],['halfords','halfords'],['smyths','smyths toys']];
+function normPayee(rawName){
+  let n=rawName.toLowerCase().replace(IBAN_RE,'').trim();
+  for(const [pre,canon] of CHAINS)if(n.startsWith(pre))return canon;
+  if(/^[a-z]{2}\d{2}[a-z0-9]{8,}$/.test(n.replace(/\s+/g,'')))return'bank transfer (iban)';
+  if(n.includes('20i'))return'20i';
+  if(n.startsWith('aa ')||n.startsWith('the aa')||n.startsWith('aa,'))return'the aa';
+  if(n.startsWith('amzn')||n.startsWith('amazon'))return'amazon';
+  if(n.includes('paddle.net')||n.startsWith('paddle')){
+    const m=n.match(/paddle\.net\*\s*(\w+)/);
+    return m?'paddle '+m[1]:'paddle';
+  }
+  if(n.includes('enix')||n.includes('brixly'))return'brixly';
+  if(n.startsWith('anthropic'))return'anthropic';
+  if(n.startsWith('replit'))return'replit';
+  if(n.startsWith('google'))return'google';
+  if(n.startsWith('microsoft')||n.startsWith('msft'))return'microsoft';
+  if(n.startsWith('enterprise rent'))return'enterprise rent-a-car';
+  if(n.startsWith('stripe'))return'stripe';
+  if(n.includes('temu'))return'temu';
+  n=n.replace(/\*\S*/g,'');
+  n=n.replace(/[^a-z0-9 &.-]/g,' ');
+  n=n.replace(/\s+/g,' ').trim();
+  return n.slice(0,40);
+}
+const IMPORT_DISPLAY={amazon:'Amazon',anthropic:'Anthropic (Claude)',replit:'Replit',brixly:'Brixly (Enix)',
+  'enterprise rent-a-car':'Enterprise Rent-A-Car',stripe:'Stripe',microsoft:'Microsoft',
+  google:'Google',temu:'Temu','bank transfer (iban)':'Bank Transfer (IBAN)',
+  'ptsb mortgage':'PTSB Mortgage',aldi:'Aldi',humm:'Humm Flexi-Fi',
+  'electric ireland':'Electric Ireland','thahira banu':'Thahira Banu',
+  'revolut transfer':'Revolut Transfer','20i':'20i (Hosting)','the aa':'The AA'};
+function displayName(norm,raw){return IMPORT_DISPLAY[norm]!==undefined?IMPORT_DISPLAY[norm]:cleanPayee(raw);}
+function findDomain(norm){for(const [k,v] of DOMAIN_MAP)if(norm.includes(k))return v;return null;}
+const TRANSFER_NAME=/exchanged to|savings vault|transferwise|money transfer|withdrawal|^wise( -|$)|wise - personal|revolut transfer|bank transfer|top-?up|transfer to|transfer from|own account|to savings|xau|to btc/i;
+const TRANSFER_CATS=new Set(['savings','financial investments']);
+function classifyImp(norm,raw,category,baseType){
+  if(baseType==='i')return'i';
+  if(TRANSFER_CATS.has(category.toLowerCase()))return'x';
+  if(TRANSFER_NAME.test(norm)||TRANSFER_NAME.test(raw))return'x';
+  return'e';
+}
+function groupForImp(category,kind){
+  if(kind==='x')return'Transfers & Savings';
+  return CAT2GROUP[category.toLowerCase()]||(kind==='i'?'Income':'Other');
+}
+function fingerprintImp(date,vendorNorm,amountCents,category,kind){
+  const s=`${date}|${vendorNorm}|${amountCents}|${category}|${kind}`;
+  let h1=0xdeadbeef^s.length,h2=0x41c6ce57^s.length;
+  for(let i=0;i<s.length;i++){const ch=s.charCodeAt(i);h1=Math.imul(h1^ch,2654435761);h2=Math.imul(h2^ch,1597334677);}
+  h1=Math.imul(h1^(h1>>>16),2246822507)^Math.imul(h2^(h2>>>13),3266489909);
+  h2=Math.imul(h2^(h2>>>16),2246822507)^Math.imul(h1^(h1>>>13),3266489909);
+  return (h1>>>0).toString(16).padStart(8,'0')+(h2>>>0).toString(16).padStart(8,'0');
+}
+function computeBaseFingerprints(){
+  const set=new Set();
+  TX.forEach(t=>{const v=V[t.v],c=CATS[t.c];if(!v||!c)return;
+    set.add(fingerprintImp(t.d,v.norm,Math.round(t.a*100),c.name,t.t0));});
+  return set;
+}
+// Minimal RFC4180 CSV line splitter — handles quoted fields with embedded
+// commas/quotes, which BudgetBakers exports use.
+function parseCsvRows(text){
+  const rows=[];let row=[],field='',inQuotes=false;
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(inQuotes){
+      if(c==='"'){if(text[i+1]==='"'){field+='"';i++;}else inQuotes=false;}
+      else field+=c;
+    } else if(c==='"')inQuotes=true;
+    else if(c===','){row.push(field);field='';}
+    else if(c==='\n'||c==='\r'){
+      if(c==='\r'&&text[i+1]==='\n')i++;
+      row.push(field);field='';
+      if(row.length>1||row[0]!=='')rows.push(row);
+      row=[];
+    } else field+=c;
+  }
+  if(field!==''||row.length){row.push(field);rows.push(row);}
+  return rows;
+}
+function parseBudgetBakersCsv(text){
+  const rows=parseCsvRows(text);
+  if(!rows.length)return{staged:[],totalRows:0,skipped:0};
+  const header=rows[0].map(h=>h.trim());
+  const idx=name=>header.indexOf(name);
+  const iType=idx('item_type'),iRec=idx('is_recurring'),iName=idx('name'),
+    iAmount=idx('amount'),iCat=idx('category'),iDate=idx('payment_date');
+  if(iType<0||iName<0||iAmount<0||iDate<0)throw new Error('Unrecognised CSV format — expected BudgetBakers export columns (item_type, name, amount, payment_date, ...)');
+  const staged=[];let skipped=0;
+  for(let i=1;i<rows.length;i++){
+    const r=rows[i];
+    if(!r||r.length<2)continue;
+    const amount=parseFloat(r[iAmount]);
+    const date=(r[iDate]||'').trim();
+    if(!Number.isFinite(amount)||!date){skipped++;continue;}
+    const raw=(r[iName]||'').trim();
+    const category=(r[iCat]||'Other').trim()||'Other';
+    const baseType=r[iType]==='revenue'?'i':'e';
+    const norm=normPayee(raw);
+    const kind=classifyImp(norm,raw,category,baseType);
+    const group=groupForImp(category,kind);
+    const amountCents=Math.round(amount*100);
+    staged.push({date,raw,vendorNorm:norm,vendorName:displayName(norm,raw),vendorDomain:findDomain(norm),
+      category,group,amountCents,kind,recurring:iRec>=0&&r[iRec]==='true',
+      fingerprint:fingerprintImp(date,norm,amountCents,category,kind)});
+  }
+  return {staged,totalRows:rows.length-1,skipped};
+}
+// ── Turso ledger (txn_delta) — same table Pro writes to, so an import from
+// either app shows up in both. Base 7,540 rows never change; imports only add.
+let LEDGER_SCHEMA_READY=false;
+async function ensureLedgerSchema(){
+  if(LEDGER_SCHEMA_READY)return;
+  await tq([
+    {sql:`CREATE TABLE IF NOT EXISTS txn_delta (
+      id TEXT PRIMARY KEY, txn_date TEXT NOT NULL, raw TEXT,
+      vendor_norm TEXT NOT NULL, vendor_name TEXT NOT NULL, vendor_domain TEXT,
+      category TEXT NOT NULL, grp TEXT NOT NULL, amount_cents INTEGER NOT NULL,
+      kind TEXT NOT NULL, recurring INTEGER NOT NULL DEFAULT 0,
+      fingerprint TEXT UNIQUE NOT NULL, imported_at INTEGER NOT NULL)`},
+    {sql:'CREATE INDEX IF NOT EXISTS txn_delta_date_idx ON txn_delta(txn_date)'},
+  ]);
+  LEDGER_SCHEMA_READY=true;
+}
+function cellv(c){return (c&&c.value)||'';}
+async function fetchDeltaTxns(){
+  await ensureLedgerSchema();
+  const res=await tq([{sql:'SELECT id,txn_date,raw,vendor_norm,vendor_name,vendor_domain,category,grp,amount_cents,kind,recurring,fingerprint,imported_at FROM txn_delta ORDER BY txn_date DESC'}]);
+  const rows=(res[0]&&res[0].response&&res[0].response.result&&res[0].response.result.rows)||[];
+  return rows.map(r=>({id:cellv(r[0]),date:cellv(r[1]),raw:cellv(r[2]),vendorNorm:cellv(r[3]),vendorName:cellv(r[4]),
+    vendorDomain:cellv(r[5])||null,category:cellv(r[6]),group:cellv(r[7]),amountCents:+cellv(r[8]),
+    kind:cellv(r[9]),recurring:cellv(r[10])==='1',fingerprint:cellv(r[11]),importedAt:+cellv(r[12])}));
+}
+async function fetchExistingDeltaFingerprints(){
+  await ensureLedgerSchema();
+  const res=await tq([{sql:'SELECT fingerprint FROM txn_delta'}]);
+  const rows=(res[0]&&res[0].response&&res[0].response.result&&res[0].response.result.rows)||[];
+  return new Set(rows.map(r=>cellv(r[0])));
+}
+async function insertDeltaTxns(rows){
+  await ensureLedgerSchema();
+  const now=Date.now(),BATCH=200;let inserted=0;
+  for(let i=0;i<rows.length;i+=BATCH){
+    const chunk=rows.slice(i,i+BATCH);
+    await tq(chunk.map(r=>({sql:`INSERT INTO txn_delta
+        (id,txn_date,raw,vendor_norm,vendor_name,vendor_domain,category,grp,amount_cents,kind,recurring,fingerprint,imported_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(fingerprint) DO NOTHING`,
+      args:[cryptoId(),r.date,r.raw,r.vendorNorm,r.vendorName,r.vendorDomain||'',r.category,r.group,
+        r.amountCents,r.kind,r.recurring?1:0,r.fingerprint,now]})));
+    inserted+=chunk.length;
+  }
+  return inserted;
+}
+function cryptoId(){return (window.crypto&&crypto.randomUUID)?crypto.randomUUID():'id-'+Date.now()+'-'+Math.random().toString(36).slice(2);}
+// Builds a tx object matching RAW.tx's expanded shape exactly (see DATA section).
+function makeTx(d,v,a,c,t,r,w){return {d,v,a,c,t,t0:t,r,w,ve:v,get vendor(){return V[this.ve]},get cat(){return CATS[this.c]}};}
+// Appends delta rows (from Turso or a fresh CSV parse) into the live V/CATS/RAWS/TX
+// arrays, creating new vendor/category/raw entries as needed. rebuild() (called by
+// the caller) then recomputes every vendor's stats + MONTHS/CURM from the result.
+function mergeLedgerDelta(delta){
+  if(!delta||!delta.length)return 0;
+  const vendorByNorm=new Map(V.map(v=>[v.norm,v]));
+  const catByName=new Map(CATS.map(c=>[c.name,c]));
+  const rawIdxMap=new Map(RAWS.map((r,i)=>[r,i]));
+  let added=0;
+  delta.forEach(d=>{
+    let v=vendorByNorm.get(d.vendorNorm);
+    if(!v){
+      v={id:'v_'+d.vendorNorm.replace(/[^a-z0-9]+/g,'_').slice(0,24)+'_'+Math.random().toString(36).slice(2,6),
+        name:d.vendorName,norm:d.vendorNorm,count:0,total:0,first:d.date,last:d.date,
+        spanMonths:1,activeMonths:0,avgMonthly:0,recurring:false,recurCt:0,
+        group:d.group,category:d.category,type:d.kind,domain:d.vendorDomain,idx:V.length};
+      v.color=GC[v.group]||'#6B7280';
+      V.push(v);vendorByNorm.set(d.vendorNorm,v);
+    }
+    let c=catByName.get(d.category);
+    if(!c){c={name:d.category,group:d.group,color:GC[d.group]||'#6B7280'};CATS.push(c);catByName.set(d.category,c);}
+    let w=rawIdxMap.get(d.raw);
+    if(w===undefined){w=RAWS.length;RAWS.push(d.raw);rawIdxMap.set(d.raw,w);}
+    TX.push(makeTx(d.date,v.idx,d.amountCents/100,CATS.indexOf(c),d.kind,!!d.recurring,w));
+    added++;
+  });
+  return added;
+}
 // ═════════════ NAV ═════════════
 const TITLES={dashboard:['Overview','Dashboard'],networth:['Wealth','Net Worth'],cashflow:['Money In / Out','Cash Flow'],
   running:['Burn Rate','Running Costs'],subs:['Recurring','Subscriptions'],vendors:['Directory','Vendors'],tx:['Ledger','Transactions'],
-  cats:['Breakdown','Categories'],ltd:['AppSumo','Lifetime Deals'],rules:['Automation','Rules Engine'],notes:['Feedback','Dev Notes'],asst:['AI','Assistant']};
+  cats:['Breakdown','Categories'],ltd:['AppSumo','Lifetime Deals'],import:['Data','Import'],rules:['Automation','Rules Engine'],notes:['Feedback','Dev Notes'],asst:['AI','Assistant']};
 const RENDER={};
+// ── Import view state + UI (needs RENDER to already exist) ─────────────────
+let IMP={phase:'idle',fileName:'',staged:[],totalRows:0,skipped:0,error:'',importedCount:0};
+function impReset(){IMP={phase:'idle',fileName:'',staged:[],totalRows:0,skipped:0,error:'',importedCount:0};RENDER.import();}
+async function impFile(file){
+  if(!file)return;
+  IMP.phase='parsing';IMP.fileName=file.name;IMP.error='';RENDER.import();
+  try{
+    const text=await file.text();
+    const {staged,totalRows,skipped}=parseBudgetBakersCsv(text);
+    IMP.staged=staged;IMP.totalRows=totalRows;IMP.skipped=skipped;IMP.phase='preview';
+  }catch(e){IMP.error=e.message;IMP.phase='error';}
+  RENDER.import();
+}
+function impFreshDupes(){
+  const baseFps=computeBaseFingerprints();
+  const seen=new Set(),fresh=[];let dupes=0;
+  IMP.staged.forEach(s=>{
+    if(baseFps.has(s.fingerprint)||seen.has(s.fingerprint)){dupes++;return;}
+    seen.add(s.fingerprint);fresh.push(s);
+  });
+  return {fresh,dupes};
+}
+async function impDoImport(){
+  const {fresh}=impFreshDupes();
+  IMP.phase='importing';IMP.error='';RENDER.import();
+  try{
+    const existingDelta=await fetchExistingDeltaFingerprints();
+    const toInsert=fresh.filter(r=>!existingDelta.has(r.fingerprint));
+    const alreadyImported=fresh.length-toInsert.length;
+    IMP.importedCount=await insertDeltaTxns(toInsert);
+    mergeLedgerDelta(toInsert);
+    rebuild();
+    if(RENDER[S.view])RENDER[S.view]();
+    noteBadge();
+    IMP.phase='done';
+    if(alreadyImported>0)IMP.error=`(${alreadyImported} of the "new" rows were already imported previously and were skipped)`;
+  }catch(e){IMP.error=e.message;IMP.phase='error';}
+  if(S.view==='import')RENDER.import();
+}
+RENDER.import=function(){
+  const el=document.getElementById('view-import');
+  const phase=IMP.phase;
+  let body='';
+  if(phase==='idle'){
+    body=`<div onclick="document.getElementById('imp-file').click()"
+      ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+      ondragleave="this.style.borderColor='var(--border)'"
+      ondrop="event.preventDefault();this.style.borderColor='var(--border)';impFile(event.dataTransfer.files[0])"
+      style="height:150px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;border:2px dashed var(--border);border-radius:12px;cursor:pointer;transition:.15s">
+      <span style="font-size:24px;opacity:.5">&#8613;</span>
+      <div style="font-size:13px;color:var(--muted)">Drop CSV here, or click to browse</div>
+    </div>
+    <input type="file" id="imp-file" accept=".csv,text/csv" style="display:none" onchange="impFile(this.files[0])">`;
+  } else if(phase==='parsing'){
+    body=`<div style="display:flex;align-items:center;justify-content:center;padding:36px;color:var(--muted);font-size:13px">Parsing ${esc(IMP.fileName)}…</div>`;
+  } else if(phase==='preview'){
+    const {fresh,dupes}=impFreshDupes();
+    const kc={e:0,i:0,x:0};fresh.forEach(r=>kc[r.kind]++);
+    body=`<div style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:14px"><span style="color:var(--income-t)">&#10003;</span> ${esc(IMP.fileName)}</div>
+      <div class="stat-grid">
+        <div class="stat"><div class="l">Total rows</div><div class="v mono">${IMP.totalRows}</div></div>
+        <div class="stat"><div class="l">Already known</div><div class="v mono" style="color:var(--muted)">${dupes}</div></div>
+        <div class="stat"><div class="l">New</div><div class="v mono" style="color:var(--income-t)">${fresh.length}</div></div>
+        <div class="stat"><div class="l">Unparseable</div><div class="v mono" style="color:${IMP.skipped?'var(--warn)':'var(--muted)'}">${IMP.skipped}</div></div>
+      </div>
+      ${fresh.length?`<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">${kc.e} expense · ${kc.i} income · ${kc.x} transfer</div>
+      <div style="max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:16px">
+        <table class="tbl"><thead><tr><th>Date</th><th>Payee</th><th>Category</th><th style="text-align:right">Amount</th></tr></thead>
+        <tbody>${fresh.slice(0,50).map(r=>`<tr><td class="mono" style="color:var(--muted)">${fmtD(r.date)}</td><td>${esc(r.vendorName)}</td><td style="color:var(--muted)">${esc(r.category)}</td><td class="mono" style="text-align:right;font-weight:600;color:${amtCol(r.kind)}">${amtSign(r.kind)}${fmt(r.amountCents/100)}</td></tr>`).join('')}</tbody></table>
+        ${fresh.length>50?`<div style="text-align:center;font-size:11px;color:var(--dimmed);padding:8px">+${fresh.length-50} more</div>`:''}
+      </div>`:''}
+      <div style="display:flex;gap:8px;align-items:center">
+        ${fresh.length?`<button class="btn btn-primary" onclick="impDoImport()">Import ${fresh.length} new transaction${fresh.length!==1?'s':''}</button>`
+          :`<div style="font-size:13px;color:var(--muted)">Nothing new to import — this export matches what's already here.</div>`}
+        <button class="btn btn-sec" onclick="impReset()">Choose a different file</button>
+      </div>`;
+  } else if(phase==='importing'){
+    body=`<div style="display:flex;align-items:center;justify-content:center;padding:36px;color:var(--muted);font-size:13px">Writing to Turso…</div>`;
+  } else if(phase==='done'){
+    body=`<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--income-t);margin-bottom:8px">&#10003; Imported ${IMP.importedCount} new transaction${IMP.importedCount!==1?'s':''}.</div>
+      ${IMP.error?`<div style="font-size:11.5px;color:var(--warn);margin-bottom:10px">${esc(IMP.error)}</div>`:''}
+      <button class="btn btn-sec" onclick="impReset()">Import another file</button>`;
+  } else if(phase==='error'){
+    body=`<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--expense-t);margin-bottom:12px">&#9888; ${esc(IMP.error)}</div>
+      <button class="btn btn-sec" onclick="impReset()">Try again</button>`;
+  }
+  el.innerHTML=`<div style="max-width:760px">
+    <div class="card" style="margin-bottom:16px">
+      <div class="sec-t" style="margin-bottom:4px">Import a BudgetBakers export</div>
+      <div class="sec-s" style="margin-bottom:16px">Export your latest transactions from BudgetBakers as CSV and drop it here. Rows already in the ledger (by date + vendor + amount + category) are skipped automatically — only genuinely new transactions get added.</div>
+      ${body}
+    </div>
+    <div style="font-size:11px;color:var(--dimmed);line-height:1.6">New rows are written to a small Turso table shared with Pro, then merged in immediately — vendor totals, running costs and the dashboard all update right away. This runs entirely in your browser; the CSV never leaves your machine except as the individual new rows sent to your own Turso database.</div>
+  </div>`;
+};
 function nav(v){
   S.view=v;
   document.querySelectorAll('.nav-item').forEach(el=>el.classList.toggle('active',el.dataset.v===v));
