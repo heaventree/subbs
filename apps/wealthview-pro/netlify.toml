@@ -1,7 +1,7 @@
 # Netlify config for Wealthview Pro.
 # In the Netlify UI set Base directory = apps/wealthview-pro
 [build]
-  command = "npm install && npm run build"
+  command = "npm install && npm run build && node scripts/inject-classic.mjs"
   publish = "dist"
 
 [functions]
