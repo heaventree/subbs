@@ -199,6 +199,7 @@ select.form-in{cursor:pointer}
       <div class="nav-sec">Analytics</div>
       <div class="nav-item active" data-v="dashboard" onclick="nav('dashboard')"><span class="ni">&#9783;</span>Dashboard</div>
       <div class="nav-item" data-v="control" onclick="nav('control')"><span class="ni">&#127919;</span>Control Center</div>
+      <div class="nav-item" data-v="billing" onclick="nav('billing')"><span class="ni">&#128179;</span>WHMCS Billing</div>
       <div class="nav-item" data-v="networth" onclick="nav('networth')"><span class="ni">&#9670;</span>Net Worth</div>
       <div class="nav-item" data-v="cashflow" onclick="nav('cashflow')"><span class="ni">&#8646;</span>Cash Flow</div>
       <div class="nav-item" data-v="running" onclick="nav('running')"><span class="ni">&#9201;</span>Running Costs</div>
@@ -226,6 +227,7 @@ select.form-in{cursor:pointer}
     <div id="content">
       <div class="view active" id="view-dashboard"></div>
       <div class="view" id="view-control"></div>
+      <div class="view" id="view-billing"></div>
       <div class="view" id="view-networth"></div>
       <div class="view" id="view-cashflow"></div>
       <div class="view" id="view-running"></div>
@@ -352,12 +354,13 @@ const S={view:'dashboard',range:12,vSearch:'',vType:'e',vSort:'total',
   owner:JSON.parse(localStorage.getItem('wv_owner')||'{}'),   // vendorId -> heaventree|personal
   entity:JSON.parse(localStorage.getItem('wv_entity')||'{}'),      // vendorId -> entity id (see ENTITIES)
   acctEntity:JSON.parse(localStorage.getItem('wv_acctentity')||'{}'), // bank accountId -> entity id
+  whmcsAck:JSON.parse(localStorage.getItem('wv_whmcsack')||'{}'),   // WHMCS invoice id -> true ("reviewed, verdict accepted")
   amtMode:localStorage.getItem('wv_amtmode')||'last',          // last | typical
   sSearch:'',sGroup:'',sStatus:'',sSort:'cost',sOwner:'',rOwner:'',tOwner:'',
   tSearch:'',tType:'all',tGroup:'',tCat:'',tYear:'',tMin:'',tMax:'',tRec:'',tPage:1,tSort:'d',tDir:-1,
   cfYear:'',
 };
-function save(){['ov','rec','rules','assets','nwHist','owner','entity','acctEntity','holdings','fx','notes','typeOv'].forEach(k=>localStorage.setItem('wv_'+(k==='nwHist'?'nwhist':k==='typeOv'?'typeov':k==='acctEntity'?'acctentity':k),JSON.stringify(S[k])));localStorage.setItem('wv_amtmode',S.amtMode);if(typeof schedulePush==='function')schedulePush();}
+function save(){['ov','rec','rules','assets','nwHist','owner','entity','acctEntity','whmcsAck','holdings','fx','notes','typeOv'].forEach(k=>localStorage.setItem('wv_'+(k==='nwHist'?'nwhist':k==='typeOv'?'typeov':k==='acctEntity'?'acctentity':k==='whmcsAck'?'whmcsack':k),JSON.stringify(S[k])));localStorage.setItem('wv_amtmode',S.amtMode);if(typeof schedulePush==='function')schedulePush();}
 
 // ═════════════ HELPERS ═════════════
 const fmt=n=>new Intl.NumberFormat('en-IE',{style:'currency',currency:'EUR',minimumFractionDigits:2}).format(n);
@@ -512,13 +515,13 @@ const SYNC_GET={
   ov:()=>S.ov, rec:()=>S.rec, rules:()=>S.rules, assets:()=>S.assets,
   nwHist:()=>S.nwHist, owner:()=>S.owner, entity:()=>S.entity, acctEntity:()=>S.acctEntity, holdings:()=>S.holdings,
   notes:()=>S.notes, typeOv:()=>S.typeOv, names:()=>S2.names,
-  merges:()=>S2.merges, amtMode:()=>S.amtMode,
+  merges:()=>S2.merges, amtMode:()=>S.amtMode, whmcsAck:()=>S.whmcsAck,
 };
 const SYNC_SET={
   ov:v=>S.ov=v, rec:v=>S.rec=v, rules:v=>S.rules=v, assets:v=>S.assets=v,
   nwHist:v=>S.nwHist=v, owner:v=>S.owner=v, entity:v=>S.entity=v, acctEntity:v=>S.acctEntity=v, holdings:v=>S.holdings=v,
   notes:v=>S.notes=v, typeOv:v=>S.typeOv=v, names:v=>S2.names=v,
-  merges:v=>S2.merges=v, amtMode:v=>S.amtMode=v,
+  merges:v=>S2.merges=v, amtMode:v=>S.amtMode=v, whmcsAck:v=>S.whmcsAck=v,
 };
 const SM=JSON.parse(localStorage.getItem('wv_syncmeta')||'{}');   // key -> ts
 const _pushed={};                                                  // key -> last pushed JSON
@@ -899,8 +902,29 @@ async function loadBankAccounts(){
     return JSON.parse(cellv(rows[0][0]));
   }catch(e){return null;}
 }
+// ── WHMCS invoice snapshot — same point-in-time-only pattern as the bank
+// accounts snapshot above: a one-way write after each sync, read by the
+// Billing view. Not part of SYNC_GET/SYNC_SET (that's for bidirectionally-
+// edited preferences like whmcsAck; this is a cache of what WHMCS said).
+async function saveWhmcsInvoices(invoices){
+  try{
+    await tq([
+      {sql:'CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT, ts INTEGER)'},
+      {sql:'INSERT INTO kv (k,v,ts) VALUES (?,?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v,ts=excluded.ts',
+        args:['whmcsInvoices',JSON.stringify({invoices,syncedAt:Date.now()}),Date.now()]},
+    ]);
+  }catch(e){ /* best-effort — Billing view falls back to its last-loaded snapshot */ }
+}
+async function loadWhmcsInvoices(){
+  try{
+    const res=await tq([{sql:"SELECT v FROM kv WHERE k='whmcsInvoices'"}]);
+    const rows=(res[0]&&res[0].response&&res[0].response.result&&res[0].response.result.rows)||[];
+    if(!rows.length)return null;
+    return JSON.parse(cellv(rows[0][0]));
+  }catch(e){return null;}
+}
 // ═════════════ NAV ═════════════
-const TITLES={dashboard:['Overview','Dashboard'],control:['All entities','Control Center'],networth:['Wealth','Net Worth'],cashflow:['Money In / Out','Cash Flow'],
+const TITLES={dashboard:['Overview','Dashboard'],control:['All entities','Control Center'],billing:['Reconciliation','WHMCS Billing'],networth:['Wealth','Net Worth'],cashflow:['Money In / Out','Cash Flow'],
   running:['Burn Rate','Running Costs'],subs:['Recurring','Subscriptions'],vendors:['Directory','Vendors'],tx:['Ledger','Transactions'],
   cats:['Breakdown','Categories'],ltd:['AppSumo','Lifetime Deals'],import:['Data','Import'],bank:['Data','Bank'],rules:['Automation','Rules Engine'],notes:['Feedback','Dev Notes'],asst:['AI','Assistant']};
 const RENDER={};
@@ -1162,6 +1186,154 @@ RENDER.control=function(){
   ${filteredUnassigned.length>80?`<div style="text-align:center;font-size:11px;color:var(--dimmed);padding:10px">+${filteredUnassigned.length-80} more — narrow your search</div>`:''}`}
 `;
 };
+
+// ═════════════ WHMCS BILLING RECONCILIATION ═════════════
+// Read-only: pulls unpaid/overdue invoices from WHMCS (via netlify/functions/
+// whmcs-call.mts — server-side credentials only) and cross-checks each one
+// against transactions already synced from the bank/Stripe/GoCardless feeds.
+// The point: WHMCS sends a client a "you owe us" reminder purely off its own
+// invoice status, which drifts out of sync with reality whenever a payment
+// lands in the bank before WHMCS's own gateway webhook (or a manual bank
+// transfer) gets recorded against the invoice. This surfaces that drift so a
+// human can correct WHMCS instead of the client getting chased incorrectly.
+//
+// Payment-method → entity/vendor mapping is the real-world account map:
+// GoCardless collections land in Heaventree Marketing & Design (UK); Stripe
+// charges land in Heaventree Ltd (Gibraltar); everything else (bank
+// transfer, Revolut) is presumed Sole Trader (IE) with no single vendor id
+// to anchor on, so it matches by entity+amount+date only.
+const WHMCS_SOURCE_MAP={
+  stripe:{entity:'ht_gibraltar',vendorId:'stripe',label:'Stripe'},
+  gocardless:{entity:'ht_marketing',vendorId:'gocardless_sas',label:'GoCardless'},
+};
+function whmcsSourceFor(inv){
+  const pm=(inv.paymentmethod||'').toLowerCase();
+  if(pm.includes('stripe'))return WHMCS_SOURCE_MAP.stripe;
+  if(pm.includes('gocardless'))return WHMCS_SOURCE_MAP.gocardless;
+  return {entity:'sole_trader',vendorId:null,label:inv.paymentmethod||'Bank transfer'};
+}
+let WHMCS_BILL={invoices:[],syncedAt:null,phase:'idle',error:''}; // phase: idle|loading|done|error
+async function whmcsCall(action,params){
+  const token=localStorage.getItem('wv_session')||'';
+  const r=await fetch('/api/whmcs/call',{method:'POST',headers:{'Content-Type':'application/json','X-Wv-Session':token},body:JSON.stringify({action,params})});
+  const j=await r.json();
+  if(!r.ok||j.result==='error')throw new Error(j.message||j.error||'WHMCS call failed');
+  return j;
+}
+async function whmcsSync(){
+  WHMCS_BILL.phase='loading';WHMCS_BILL.error='';RENDER.billing();
+  try{
+    const [unpaid,overdue]=await Promise.all([
+      whmcsCall('GetInvoices',{status:'Unpaid',limit:500}),
+      whmcsCall('GetInvoices',{status:'Overdue',limit:500}),
+    ]);
+    const byId={};
+    [...((unpaid.invoices&&unpaid.invoices.invoice)||[]),...((overdue.invoices&&overdue.invoices.invoice)||[])].forEach(inv=>{byId[inv.id]=inv;});
+    const invoices=Object.values(byId);
+    WHMCS_BILL={invoices,syncedAt:Date.now(),phase:'done',error:''};
+    saveWhmcsInvoices(invoices); // fire-and-forget cache, mirrors saveBankAccounts
+    toast(`Synced ${invoices.length} unpaid/overdue invoice${invoices.length!==1?'s':''} from WHMCS`);
+  }catch(e){
+    WHMCS_BILL.phase='error';WHMCS_BILL.error=e.message;
+  }
+  RENDER.billing();
+}
+function whmcsLoadInvoices(){
+  loadWhmcsInvoices().then(snap=>{
+    if(!snap)return;
+    WHMCS_BILL={invoices:snap.invoices,syncedAt:snap.syncedAt,phase:'done',error:''};
+    if(S.view==='billing')RENDER.billing();
+  }).catch(()=>{});
+}
+// Does a bank/Stripe/GoCardless-sourced transaction already exist that
+// plausibly settles this invoice? Exact amount match (WHMCS totals are
+// precise to the cent; a mismatch is a real signal, not noise) within a
+// window from the invoice date out to 30 days past its due date, on
+// whichever entity its payment method maps to, and — where the payment
+// method is known — on that specific income vendor too, so a same-amount
+// coincidence elsewhere in the same entity can't false-positive.
+function whmcsMatch(inv){
+  const src=whmcsSourceFor(inv);
+  const amt=+inv.total;
+  const from=new Date(inv.date||inv.duedate);
+  const to=new Date(inv.duedate||inv.date);to.setDate(to.getDate()+30);
+  const hit=TX.find(t=>{
+    if(t.t!=='i')return false;
+    if(Math.abs(t.a-amt)>0.01)return false;
+    const d=new Date(t.d);
+    if(d<from||d>to)return false;
+    if(txEntity(t)!==src.entity)return false;
+    if(src.vendorId&&V[t.v]&&V[t.v].id!==src.vendorId)return false;
+    return true;
+  });
+  return {src,hit};
+}
+RENDER.billing=function(){
+  const el=document.getElementById('view-billing');
+  if(WHMCS_BILL.phase==='idle'){
+    el.innerHTML=`<div class="empty"><div class="empty-ic">&#128179;</div>No WHMCS data yet — click "Sync WHMCS invoices" above.</div>`;
+    return;
+  }
+  if(WHMCS_BILL.phase==='loading'&&!WHMCS_BILL.invoices.length){
+    el.innerHTML=`<div style="display:flex;align-items:center;justify-content:center;padding:36px;color:var(--muted);font-size:13px">Fetching invoices from WHMCS…</div>`;
+    return;
+  }
+  const list=WHMCS_BILL.invoices.map(inv=>{const {src,hit}=whmcsMatch(inv);return {inv,src,hit,acked:!!S.whmcsAck[inv.id]};});
+  const likelyPaid=list.filter(x=>x.hit&&!x.acked);
+  const outstanding=list.filter(x=>!x.hit&&!x.acked);
+  const reviewed=list.filter(x=>x.acked);
+  const sumOf=l=>l.reduce((s,x)=>s+ +x.inv.total,0);
+  const today=new Date();
+  const daysOverdue=inv=>{const d=new Date(inv.duedate);return Math.max(0,Math.round((today-d)/86400000));};
+
+  const row=(x,verdict)=>{const {inv,src}=x;
+    return `<tr class="rowh">
+      <td>#${esc(inv.invoicenum||inv.id)}</td>
+      <td>${esc(inv.firstname?inv.firstname+' '+(inv.lastname||''):inv.companyname||('Client #'+inv.userid))}</td>
+      <td><span style="display:inline-flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:${ENTITY_BY_ID[src.entity]?ENTITY_BY_ID[src.entity].color:'#5B6373'}"></span>${esc(ENTITY_BY_ID[src.entity]?ENTITY_BY_ID[src.entity].name:src.entity)}</span></td>
+      <td class="mono" style="text-align:right;font-weight:600">${fmt(+inv.total)}</td>
+      <td class="mono" style="text-align:right;color:${daysOverdue(inv)>0?'var(--expense-t)':'var(--muted)'}">${fmtD(inv.duedate)}${daysOverdue(inv)>0?` · ${daysOverdue(inv)}d overdue`:''}</td>
+      <td>${verdict}</td>
+      <td style="text-align:right"><button class="btn btn-sec" style="height:26px;font-size:11px;padding:0 10px" onclick="whmcsAck('${inv.id}')">${x.acked?'Un-review':'Mark reviewed'}</button></td>
+    </tr>`;
+  };
+  const matchedBadge=x=>`<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--income-t)">&#10003; Paid ${fmtD(x.hit.d)} · ${fmt(x.hit.a)} — check WHMCS</span>`;
+  const openBadge=`<span style="font-size:11px;color:var(--dimmed)">No matching payment found</span>`;
+
+  el.innerHTML=`
+  <div class="cards-grid" style="margin-bottom:22px">
+    <div class="card" style="padding:16px;border-left:3px solid var(--income-t)">
+      <div style="font-size:12.5px;font-weight:600;margin-bottom:2px">Likely already paid</div>
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:10px">WHMCS says unpaid, a matching bank/Stripe/GoCardless payment already exists</div>
+      <div class="mono" style="font-size:18px;font-weight:600;color:var(--income-t)">${fmt0(sumOf(likelyPaid))}</div>
+      <div style="font-size:10.5px;color:var(--dimmed);margin-top:3px">${likelyPaid.length} invoice${likelyPaid.length!==1?'s':''}</div>
+    </div>
+    <div class="card" style="padding:16px;border-left:3px solid var(--expense-t)">
+      <div style="font-size:12.5px;font-weight:600;margin-bottom:2px">Genuinely outstanding</div>
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:10px">No matching payment found in synced feeds — safe to chase</div>
+      <div class="mono" style="font-size:18px;font-weight:600;color:var(--expense-t)">${fmt0(sumOf(outstanding))}</div>
+      <div style="font-size:10.5px;color:var(--dimmed);margin-top:3px">${outstanding.length} invoice${outstanding.length!==1?'s':''}</div>
+    </div>
+    <div class="card" style="padding:16px;border-left:3px solid var(--dimmed)">
+      <div style="font-size:12.5px;font-weight:600;margin-bottom:2px">Reviewed</div>
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:10px">Marked reviewed — won't resurface until re-synced</div>
+      <div class="mono" style="font-size:18px;font-weight:600">${reviewed.length}</div>
+      <div style="font-size:10.5px;color:var(--dimmed);margin-top:3px">${WHMCS_BILL.syncedAt?'Synced '+new Date(WHMCS_BILL.syncedAt).toLocaleString('en-IE'):''}</div>
+    </div>
+  </div>
+  ${WHMCS_BILL.error?`<div class="empty" style="border-color:var(--expense-t);margin-bottom:20px">${esc(WHMCS_BILL.error)}</div>`:''}
+  ${likelyPaid.length?`<div class="sec-hdr"><div class="sec-t">Likely already paid — check WHMCS</div><span class="res-ct">${likelyPaid.length}</span></div>
+  <table class="tbl" style="margin-bottom:26px"><thead><tr><th>Invoice</th><th>Client</th><th>Entity</th><th style="text-align:right">Amount</th><th>Due</th><th>Match</th><th></th></tr></thead><tbody>${likelyPaid.map(x=>row(x,matchedBadge(x))).join('')}</tbody></table>`:''}
+  <div class="sec-hdr"><div class="sec-t">Outstanding</div><span class="res-ct">${outstanding.length}</span></div>
+  ${outstanding.length===0?`<div class="empty"><div class="empty-ic">&#10003;</div>Nothing genuinely outstanding.</div>`:
+  `<table class="tbl"><thead><tr><th>Invoice</th><th>Client</th><th>Entity</th><th style="text-align:right">Amount</th><th>Due</th><th>Match</th><th></th></tr></thead><tbody>${outstanding.sort((a,b)=>daysOverdue(b.inv)-daysOverdue(a.inv)).map(x=>row(x,openBadge)).join('')}</tbody></table>`}
+`;
+};
+function whmcsAck(id){
+  if(S.whmcsAck[id])delete S.whmcsAck[id];else S.whmcsAck[id]=true;
+  save();RENDER.billing();
+}
+
 function nav(v){
   S.view=v;
   document.querySelectorAll('.nav-item').forEach(el=>el.classList.toggle('active',el.dataset.v===v));
@@ -1175,6 +1347,7 @@ function nav(v){
   else if(v==='rules')ac.innerHTML=`<button class="btn btn-primary" onclick="applyRules()">&#9658; Apply rules</button>`;
   else if(v==='networth')ac.innerHTML=`<button class="btn btn-sec" onclick="refreshPrices()">&#8635; Refresh prices</button><button class="btn btn-sec" onclick="addHoldingModal()">+ Holding</button><button class="btn btn-primary" onclick="addAssetModal()">+ Asset / liability</button>`;
   else if(v==='bank')ac.innerHTML=`<button class="btn btn-primary" onclick="nav('import')">&#8635; Sync now</button>`;
+  else if(v==='billing')ac.innerHTML=`<button class="btn btn-primary" onclick="whmcsSync()">&#8635; Sync WHMCS invoices</button>`;
   else ac.innerHTML='';
   RENDER[v]();
 }
@@ -2353,6 +2526,7 @@ function bootApp(){
   noteBadge();
   cloudBoot();
   bankLoadAccounts();
+  whmcsLoadInvoices();
   const ov=document.getElementById('auth-gate-overlay');if(ov)ov.remove();
 }
 (function authGuard(){
