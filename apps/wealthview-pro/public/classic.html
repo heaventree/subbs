@@ -906,12 +906,12 @@ async function loadBankAccounts(){
 // accounts snapshot above: a one-way write after each sync, read by the
 // Billing view. Not part of SYNC_GET/SYNC_SET (that's for bidirectionally-
 // edited preferences like whmcsAck; this is a cache of what WHMCS said).
-async function saveWhmcsInvoices(invoices){
+async function saveWhmcsInvoices(invoices,truncated){
   try{
     await tq([
       {sql:'CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT, ts INTEGER)'},
       {sql:'INSERT INTO kv (k,v,ts) VALUES (?,?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v,ts=excluded.ts',
-        args:['whmcsInvoices',JSON.stringify({invoices,syncedAt:Date.now()}),Date.now()]},
+        args:['whmcsInvoices',JSON.stringify({invoices,syncedAt:Date.now(),truncated:!!truncated}),Date.now()]},
     ]);
   }catch(e){ /* best-effort — Billing view falls back to its last-loaded snapshot */ }
 }
@@ -1212,7 +1212,7 @@ function whmcsSourceFor(inv){
   if(pm.includes('gocardless'))return WHMCS_SOURCE_MAP.gocardless;
   return {entity:'sole_trader',vendorId:null,label:inv.paymentmethod||'Bank transfer'};
 }
-let WHMCS_BILL={invoices:[],syncedAt:null,phase:'idle',error:''}; // phase: idle|loading|done|error
+let WHMCS_BILL={invoices:[],syncedAt:null,phase:'idle',error:'',truncated:false}; // phase: idle|loading|done|error
 async function whmcsCall(action,params){
   const token=localStorage.getItem('wv_session')||'';
   const r=await fetch('/api/whmcs/call',{method:'POST',headers:{'Content-Type':'application/json','X-Wv-Session':token},body:JSON.stringify({action,params})});
@@ -1225,17 +1225,22 @@ async function whmcsCall(action,params){
 // truncate to WHMCS's own default page and understate what's outstanding).
 // Pages until totalresults is exhausted, bounded so one runaway account
 // can't hang the function.
+// Returns {items,complete} — `complete:false` means MAX_PAGES was hit before
+// totalresults was exhausted, so the caller must not present the result as
+// the full picture (a truncated "outstanding" list is worse than none: it
+// looks authoritative while quietly missing invoices).
 async function whmcsFetchAllInvoices(status){
   const PAGE=100,MAX_PAGES=20
   const out=[]
+  let complete=false
   for(let page=0;page<MAX_PAGES;page++){
     const res=await whmcsCall('GetInvoices',{status,limitstart:page*PAGE,limitnum:PAGE})
     const items=(res.invoices&&res.invoices.invoice)||[]
     out.push(...items)
     const total=+res.totalresults||items.length
-    if(items.length<PAGE||out.length>=total)break
+    if(items.length<PAGE||out.length>=total){complete=true;break}
   }
-  return out
+  return {items:out,complete}
 }
 async function whmcsSync(){
   WHMCS_BILL.phase='loading';WHMCS_BILL.error='';RENDER.billing();
@@ -1245,11 +1250,12 @@ async function whmcsSync(){
       whmcsFetchAllInvoices('Overdue'),
     ]);
     const byId={};
-    [...unpaid,...overdue].forEach(inv=>{byId[inv.id]=inv;});
+    [...unpaid.items,...overdue.items].forEach(inv=>{byId[inv.id]=inv;});
     const invoices=Object.values(byId);
-    WHMCS_BILL={invoices,syncedAt:Date.now(),phase:'done',error:''};
-    saveWhmcsInvoices(invoices); // fire-and-forget cache, mirrors saveBankAccounts
-    toast(`Synced ${invoices.length} unpaid/overdue invoice${invoices.length!==1?'s':''} from WHMCS`);
+    const truncated=!unpaid.complete||!overdue.complete;
+    WHMCS_BILL={invoices,syncedAt:Date.now(),phase:'done',error:'',truncated};
+    saveWhmcsInvoices(invoices,truncated); // fire-and-forget cache, mirrors saveBankAccounts
+    toast(`Synced ${invoices.length} unpaid/overdue invoice${invoices.length!==1?'s':''} from WHMCS${truncated?' — hit the page cap, list may be partial':''}`);
   }catch(e){
     WHMCS_BILL.phase='error';WHMCS_BILL.error=e.message;
   }
@@ -1258,7 +1264,12 @@ async function whmcsSync(){
 function whmcsLoadInvoices(){
   loadWhmcsInvoices().then(snap=>{
     if(!snap)return;
-    WHMCS_BILL={invoices:snap.invoices,syncedAt:snap.syncedAt,phase:'done',error:''};
+    // A sync may have started or finished while this Turso read was in
+    // flight — never let a late boot-time snapshot stomp on fresher data
+    // (or cancel an in-flight sync's loading state).
+    if(WHMCS_BILL.phase!=='idle')return;
+    if(WHMCS_BILL.syncedAt&&!(snap.syncedAt>WHMCS_BILL.syncedAt))return;
+    WHMCS_BILL={invoices:snap.invoices,syncedAt:snap.syncedAt,phase:'done',error:'',truncated:!!snap.truncated};
     if(S.view==='billing')RENDER.billing();
   }).catch(()=>{});
 }
@@ -1279,19 +1290,25 @@ function whmcsMatchAll(invoices){
   const claimed=new Set();
   const ordered=[...invoices].sort((a,b)=>new Date(a.duedate||a.date)-new Date(b.duedate||b.date)||(a.id-b.id));
   const byId={};
+  // Normalize to a date-only UTC day number before comparing: WHMCS returns
+  // some date fields as bare "YYYY-MM-DD" (parsed as UTC midnight by `new
+  // Date`) and others as "YYYY-MM-DD HH:MM:SS" (parsed as local time) — mixing
+  // the two shifts the `from` boundary by the timezone offset and can drop a
+  // same-day payment out of the window.
+  const dayOf=s=>{const m=String(s||'').match(/^(\d{4})-(\d{2})-(\d{2})/);return m?Date.UTC(+m[1],+m[2]-1,+m[3]):NaN;};
   ordered.forEach(inv=>{
     const src=whmcsSourceFor(inv);
     const amt=+inv.total;
-    const from=new Date(inv.date||inv.duedate);
-    const to=new Date(inv.duedate||inv.date);to.setDate(to.getDate()+30);
+    const from=dayOf(inv.date||inv.duedate);
+    const to=dayOf(inv.duedate||inv.date)+30*86400000;
     const hit=TX.find(t=>{
       if(claimed.has(t))return false;
       if(t.t!=='i')return false;
       if(Math.abs(t.a-amt)>0.01)return false;
-      const d=new Date(t.d);
+      const d=dayOf(t.d);
       if(d<from||d>to)return false;
       if(txEntity(t)!==src.entity)return false;
-      if(src.vendorId&&V[t.v]&&V[t.v].id!==src.vendorId)return false;
+      if(src.vendorId&&(!V[t.v]||V[t.v].id!==src.vendorId))return false;
       return true;
     });
     if(hit)claimed.add(hit);
@@ -1342,7 +1359,7 @@ RENDER.billing=function(){
     </div>
     <div class="card" style="padding:16px;border-left:3px solid var(--expense-t)">
       <div style="font-size:12.5px;font-weight:600;margin-bottom:2px">Genuinely outstanding</div>
-      <div style="font-size:10.5px;color:var(--muted);margin-bottom:10px">No matching payment found in synced feeds — safe to chase</div>
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:10px">${WHMCS_BILL.truncated?'No matching payment found — but this sync hit the page cap, so treat as incomplete':'No matching payment found in synced feeds — safe to chase'}</div>
       <div class="mono" style="font-size:18px;font-weight:600;color:var(--expense-t)">${fmt0(sumOf(outstanding))}</div>
       <div style="font-size:10.5px;color:var(--dimmed);margin-top:3px">${outstanding.length} invoice${outstanding.length!==1?'s':''}</div>
     </div>
@@ -1354,6 +1371,7 @@ RENDER.billing=function(){
     </div>
   </div>
   ${WHMCS_BILL.error?`<div class="empty" style="border-color:var(--expense-t);margin-bottom:20px">${esc(WHMCS_BILL.error)}</div>`:''}
+  ${WHMCS_BILL.truncated?`<div class="empty" style="border-color:var(--warn);margin-bottom:20px">&#9888; This sync hit WHMCS's page cap (${20*100} invoices) before finishing — the lists below may be missing invoices. Safe to re-sync; only a concern if you genuinely have that many open.</div>`:''}
   ${likelyPaid.length?`<div class="sec-hdr"><div class="sec-t">Likely already paid — check WHMCS</div><span class="res-ct">${likelyPaid.length}</span></div>
   <table class="tbl" style="margin-bottom:26px"><thead><tr><th>Invoice</th><th>Client</th><th>Entity</th><th style="text-align:right">Amount</th><th>Due</th><th>Match</th><th></th></tr></thead><tbody>${likelyPaid.map(x=>row(x,matchedBadge(x))).join('')}</tbody></table>`:''}
   <div class="sec-hdr"><div class="sec-t">Outstanding</div><span class="res-ct">${outstanding.length}</span></div>

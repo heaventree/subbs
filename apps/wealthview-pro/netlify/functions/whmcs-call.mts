@@ -108,6 +108,7 @@ async function handle(req: Request) {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: form.toString(),
+      signal: AbortSignal.timeout(15_000),
     })
     const text = await res.text()
     let data: unknown
