@@ -214,7 +214,7 @@ select.form-in{cursor:pointer}
       <div class="nav-item" data-v="asst" onclick="nav('asst')"><span class="ni">&#10022;</span>Assistant</div>
       <div class="nav-item" data-v="notes" onclick="nav('notes')"><span class="ni">&#9998;</span>Dev Notes <span id="nb-ct" style="margin-left:auto;font-size:10.5px;background:var(--accent-12);color:var(--accent-h);border-radius:99px;padding:1px 7px"></span></div>
     </nav>
-    <div class="sb-user"><a href="/?pro=1" style="display:block;text-align:center;font-size:11px;color:var(--dimmed);padding:6px 0 2px;text-decoration:none" onmouseover="this.style.color='var(--accent-h)'" onmouseout="this.style.color='var(--dimmed)'">Try Pro (beta) &#8594;</a><div class="sb-user-in"><div class="av-user">SO</div><div style="min-width:0"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Sean O&#39;Byrne</div><div style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:5px">Heaventree Ltd. · <span style="color:var(--accent-h)">build 17.07-e</span> <span id="db-dot" style="width:7px;height:7px;border-radius:50%;background:#5B6373;display:inline-block" title="Turso"></span></div></div></div></div>
+    <div class="sb-user"><a href="/?pro=1" style="display:block;text-align:center;font-size:11px;color:var(--dimmed);padding:6px 0 2px;text-decoration:none" onmouseover="this.style.color='var(--accent-h)'" onmouseout="this.style.color='var(--dimmed)'">Try Pro (beta) &#8594;</a><div class="sb-user-in"><div class="av-user">SO</div><div style="min-width:0"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Sean O&#39;Byrne</div><div style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:5px">Heaventree Ltd. · <span style="color:var(--accent-h)">build 17.07-f</span> <span id="db-dot" style="width:7px;height:7px;border-radius:50%;background:#5B6373;display:inline-block" title="Turso"></span></div></div></div></div>
   </aside>
   <div id="main">
     <div class="topbar">
@@ -821,15 +821,49 @@ const TITLES={dashboard:['Overview','Dashboard'],networth:['Wealth','Net Worth']
   cats:['Breakdown','Categories'],ltd:['AppSumo','Lifetime Deals'],import:['Data','Import'],rules:['Automation','Rules Engine'],notes:['Feedback','Dev Notes'],asst:['AI','Assistant']};
 const RENDER={};
 // ── Import view state + UI (needs RENDER to already exist) ─────────────────
-let IMP={phase:'idle',fileName:'',staged:[],totalRows:0,skipped:0,error:'',importedCount:0};
-function impReset(){IMP={phase:'idle',fileName:'',staged:[],totalRows:0,skipped:0,error:'',importedCount:0};RENDER.import();}
+let IMP={phase:'idle',fileName:'',source:'csv',staged:[],totalRows:0,skipped:0,error:'',importedCount:0};
+function impReset(){IMP={phase:'idle',fileName:'',source:'csv',staged:[],totalRows:0,skipped:0,error:'',importedCount:0};RENDER.import();}
 async function impFile(file){
   if(!file)return;
-  IMP.phase='parsing';IMP.fileName=file.name;IMP.error='';RENDER.import();
+  IMP.phase='parsing';IMP.fileName=file.name;IMP.source='csv';IMP.error='';RENDER.import();
   try{
     const text=await file.text();
     const {staged,totalRows,skipped}=parseBudgetBakersCsv(text);
     IMP.staged=staged;IMP.totalRows=totalRows;IMP.skipped=skipped;IMP.phase='preview';
+  }catch(e){IMP.error=e.message;IMP.phase='error';}
+  RENDER.import();
+}
+// ── open-banking.io bank sync — reuses the exact same staged-row shape, so
+// everything downstream (preview, dedup, Turso write) is identical to a CSV
+// import. The Netlify function (bank-sync.mts) holds the API key + decryption
+// key server-side and only ever returns already-decrypted transactions to
+// this authenticated session.
+function bankTxnToStaged(t){
+  const raw=(t.creditorName||t.debtorName||t.remittanceInformation||t.note||'Bank transaction').trim();
+  const date=(t.bookingDate||t.valueDate||t.transactionDate||'').slice(0,10);
+  const amt=parseFloat(t.amount);
+  if(!date||!Number.isFinite(amt))return null;
+  const category='Other'; // bank feeds carry an MCC, not a BudgetBakers-style category — rename/merge in Vendors to fix up
+  const baseType=t.creditDebitIndicator==='CRDT'?'i':'e';
+  const norm=normPayee(raw);
+  const kind=classifyImp(norm,raw,category,baseType);
+  const group=groupForImp(category,kind);
+  const amountCents=Math.round(amt*100);
+  return {date,raw,vendorNorm:norm,vendorName:displayName(norm,raw),vendorDomain:findDomain(norm),
+    category,group,amountCents,kind,recurring:false,
+    fingerprint:fingerprintImp(date,norm,amountCents,category,kind)};
+}
+async function bankSync(){
+  IMP.phase='parsing';IMP.fileName='open-banking.io';IMP.source='bank';IMP.error='';RENDER.import();
+  try{
+    const token=localStorage.getItem('wv_session')||'';
+    const r=await fetch('/api/bank/sync',{headers:{'X-Wv-Session':token}});
+    const j=await r.json();
+    if(!r.ok)throw new Error(j.error||'bank sync failed');
+    const raw=j.transactions||[];
+    let skipped=0;
+    const staged=raw.map(t=>{const s=bankTxnToStaged(t);if(!s)skipped++;return s;}).filter(Boolean);
+    IMP.staged=staged;IMP.totalRows=raw.length;IMP.skipped=skipped;IMP.phase='preview';
   }catch(e){IMP.error=e.message;IMP.phase='error';}
   RENDER.import();
 }
@@ -872,9 +906,13 @@ RENDER.import=function(){
       <span style="font-size:24px;opacity:.5">&#8613;</span>
       <div style="font-size:13px;color:var(--muted)">Drop CSV here, or click to browse</div>
     </div>
-    <input type="file" id="imp-file" accept=".csv,text/csv" style="display:none" onchange="impFile(this.files[0])">`;
+    <input type="file" id="imp-file" accept=".csv,text/csv" style="display:none" onchange="impFile(this.files[0])">
+    <div style="display:flex;align-items:center;gap:10px;margin:14px 0">
+      <div style="flex:1;height:1px;background:var(--border)"></div><span style="font-size:11px;color:var(--dimmed)">or</span><div style="flex:1;height:1px;background:var(--border)"></div>
+    </div>
+    <button class="btn btn-sec" style="width:100%;justify-content:center" onclick="bankSync()">&#8635; Sync connected banks (open-banking.io)</button>`;
   } else if(phase==='parsing'){
-    body=`<div style="display:flex;align-items:center;justify-content:center;padding:36px;color:var(--muted);font-size:13px">Parsing ${esc(IMP.fileName)}…</div>`;
+    body=`<div style="display:flex;align-items:center;justify-content:center;padding:36px;color:var(--muted);font-size:13px">${IMP.source==='bank'?'Syncing from open-banking.io…':'Parsing '+esc(IMP.fileName)+'…'}</div>`;
   } else if(phase==='preview'){
     const {fresh,dupes}=impFreshDupes();
     const kc={e:0,i:0,x:0};fresh.forEach(r=>kc[r.kind]++);
@@ -908,11 +946,11 @@ RENDER.import=function(){
   }
   el.innerHTML=`<div style="max-width:760px">
     <div class="card" style="margin-bottom:16px">
-      <div class="sec-t" style="margin-bottom:4px">Import a BudgetBakers export</div>
-      <div class="sec-s" style="margin-bottom:16px">Export your latest transactions from BudgetBakers as CSV and drop it here. Rows already in the ledger (by date + vendor + amount + category) are skipped automatically — only genuinely new transactions get added.</div>
+      <div class="sec-t" style="margin-bottom:4px">Import transactions</div>
+      <div class="sec-s" style="margin-bottom:16px">Export a BudgetBakers CSV and drop it here, or sync directly from your connected banks via open-banking.io. Rows already in the ledger (by date + vendor + amount + category) are skipped automatically — only genuinely new transactions get added.</div>
       ${body}
     </div>
-    <div style="font-size:11px;color:var(--dimmed);line-height:1.6">New rows are written to a small Turso table shared with Pro, then merged in immediately — vendor totals, running costs and the dashboard all update right away. This runs entirely in your browser; the CSV never leaves your machine except as the individual new rows sent to your own Turso database.</div>
+    <div style="font-size:11px;color:var(--dimmed);line-height:1.6">New rows are written to a small Turso table shared with Pro, then merged in immediately — vendor totals, running costs and the dashboard all update right away. CSV rows never leave your machine except as the individual new rows sent to your own Turso database; a bank sync is decrypted server-side by your own open-banking.io credentials and never touches the browser.</div>
   </div>`;
 };
 function nav(v){
