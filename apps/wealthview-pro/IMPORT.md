@@ -38,3 +38,34 @@ functions can reach the open internet — proven, since the auth function
 already talks to Turso and Resend). That would write into the same
 `txn_delta` table this import path already uses — the merge/dashboard
 side needs no changes, only a new writer.
+
+## Data → Import: bank sync (open-banking.io)
+
+This is now real, not hypothetical — same idea as above, but for direct
+bank connections instead of a BudgetBakers token. `netlify/functions/bank-sync.mts`
+holds the open-banking.io API key and decryption private key **server-side
+only** and returns already-decrypted transactions to the logged-in session;
+the browser never sees the private key. Classic's "Sync connected banks"
+button (Data → Import) then runs those transactions through the exact
+same `normPayee`/`classify`/`fingerprint` pipeline a CSV import uses, so
+there's one dedup path and one Turso writer (`txn_delta`) for both sources.
+
+**Required Netlify env vars** (from the `credentials.json` you export at
+[open-banking.io](https://open-banking.io) after connecting your bank
+accounts — never paste the private key anywhere but the Netlify env UI):
+
+- `OBIO_API_BASE_URL` — `credentials.json`'s `apiBaseUrl`
+- `OBIO_API_KEY` — `credentials.json`'s `apiKey`
+- `OBIO_PRIVATE_KEY_PKCS8` — `credentials.json`'s `encryptionKey.privateKey`
+
+(`AUTH_SECRET` and `ALLOWED_EMAIL` are already required for login — the
+bank-sync endpoint reuses them to verify the same session token, so only
+the logged-in owner can trigger a sync.)
+
+**Why CSV import is still worth keeping**: a raw bank feed carries an MCC
+(merchant category code, numeric) rather than BudgetBakers' human category
+names, so bank-synced rows land in category "Other" and rely on the
+existing Vendors rename/merge workbench to clean up — whereas a BudgetBakers
+CSV export already has real categories. Bank sync is for staying current
+day-to-day; a periodic BudgetBakers CSV export still gives the richest
+categorization for the full history.
