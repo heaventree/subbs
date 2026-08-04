@@ -90,14 +90,18 @@ async function handle(req: Request) {
   }
 
   const form = new URLSearchParams()
-  form.set('identifier', identifier) // raw API Identifier — never username
-  form.set('secret', secret)         // raw API Secret — never MD5(password)
-  form.set('action', body.action)
-  form.set('responsetype', 'json')
   for (const [k, v] of Object.entries(body.params ?? {})) {
     if (v === null || v === undefined) continue
     form.set(k, String(v))
   }
+  // Trusted fields are set LAST so a caller can never smuggle an
+  // unwhitelisted action (or forge identifier/secret) via params — e.g.
+  // { action: 'GetInvoices', params: { action: 'DeleteClient' } } must
+  // still submit as GetInvoices, not silently become the params value.
+  form.set('identifier', identifier) // raw API Identifier — never username
+  form.set('secret', secret)         // raw API Secret — never MD5(password)
+  form.set('action', body.action)
+  form.set('responsetype', 'json')
 
   try {
     const res = await fetch(apiUrl, {

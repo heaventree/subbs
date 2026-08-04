@@ -1220,15 +1220,32 @@ async function whmcsCall(action,params){
   if(!r.ok||j.result==='error')throw new Error(j.message||j.error||'WHMCS call failed');
   return j;
 }
+// WHMCS paginates GetInvoices with limitnum/limitstart (not "limit" —
+// that's silently ignored, so without this every sync would quietly
+// truncate to WHMCS's own default page and understate what's outstanding).
+// Pages until totalresults is exhausted, bounded so one runaway account
+// can't hang the function.
+async function whmcsFetchAllInvoices(status){
+  const PAGE=100,MAX_PAGES=20
+  const out=[]
+  for(let page=0;page<MAX_PAGES;page++){
+    const res=await whmcsCall('GetInvoices',{status,limitstart:page*PAGE,limitnum:PAGE})
+    const items=(res.invoices&&res.invoices.invoice)||[]
+    out.push(...items)
+    const total=+res.totalresults||items.length
+    if(items.length<PAGE||out.length>=total)break
+  }
+  return out
+}
 async function whmcsSync(){
   WHMCS_BILL.phase='loading';WHMCS_BILL.error='';RENDER.billing();
   try{
     const [unpaid,overdue]=await Promise.all([
-      whmcsCall('GetInvoices',{status:'Unpaid',limit:500}),
-      whmcsCall('GetInvoices',{status:'Overdue',limit:500}),
+      whmcsFetchAllInvoices('Unpaid'),
+      whmcsFetchAllInvoices('Overdue'),
     ]);
     const byId={};
-    [...((unpaid.invoices&&unpaid.invoices.invoice)||[]),...((overdue.invoices&&overdue.invoices.invoice)||[])].forEach(inv=>{byId[inv.id]=inv;});
+    [...unpaid,...overdue].forEach(inv=>{byId[inv.id]=inv;});
     const invoices=Object.values(byId);
     WHMCS_BILL={invoices,syncedAt:Date.now(),phase:'done',error:''};
     saveWhmcsInvoices(invoices); // fire-and-forget cache, mirrors saveBankAccounts
@@ -1252,21 +1269,35 @@ function whmcsLoadInvoices(){
 // whichever entity its payment method maps to, and — where the payment
 // method is known — on that specific income vendor too, so a same-amount
 // coincidence elsewhere in the same entity can't false-positive.
-function whmcsMatch(inv){
-  const src=whmcsSourceFor(inv);
-  const amt=+inv.total;
-  const from=new Date(inv.date||inv.duedate);
-  const to=new Date(inv.duedate||inv.date);to.setDate(to.getDate()+30);
-  const hit=TX.find(t=>{
-    if(t.t!=='i')return false;
-    if(Math.abs(t.a-amt)>0.01)return false;
-    const d=new Date(t.d);
-    if(d<from||d>to)return false;
-    if(txEntity(t)!==src.entity)return false;
-    if(src.vendorId&&V[t.v]&&V[t.v].id!==src.vendorId)return false;
-    return true;
+//
+// Runs across the WHOLE invoice set together, not independently per
+// invoice: a `claimed` set stops one bank payment from settling two
+// invoices at once (e.g. two €100 invoices in the same window would both
+// independently match the one €100 payment that can only cover one of
+// them). Earliest-due invoices claim first.
+function whmcsMatchAll(invoices){
+  const claimed=new Set();
+  const ordered=[...invoices].sort((a,b)=>new Date(a.duedate||a.date)-new Date(b.duedate||b.date)||(a.id-b.id));
+  const byId={};
+  ordered.forEach(inv=>{
+    const src=whmcsSourceFor(inv);
+    const amt=+inv.total;
+    const from=new Date(inv.date||inv.duedate);
+    const to=new Date(inv.duedate||inv.date);to.setDate(to.getDate()+30);
+    const hit=TX.find(t=>{
+      if(claimed.has(t))return false;
+      if(t.t!=='i')return false;
+      if(Math.abs(t.a-amt)>0.01)return false;
+      const d=new Date(t.d);
+      if(d<from||d>to)return false;
+      if(txEntity(t)!==src.entity)return false;
+      if(src.vendorId&&V[t.v]&&V[t.v].id!==src.vendorId)return false;
+      return true;
+    });
+    if(hit)claimed.add(hit);
+    byId[inv.id]={src,hit};
   });
-  return {src,hit};
+  return byId;
 }
 RENDER.billing=function(){
   const el=document.getElementById('view-billing');
@@ -1278,7 +1309,8 @@ RENDER.billing=function(){
     el.innerHTML=`<div style="display:flex;align-items:center;justify-content:center;padding:36px;color:var(--muted);font-size:13px">Fetching invoices from WHMCS…</div>`;
     return;
   }
-  const list=WHMCS_BILL.invoices.map(inv=>{const {src,hit}=whmcsMatch(inv);return {inv,src,hit,acked:!!S.whmcsAck[inv.id]};});
+  const matches=whmcsMatchAll(WHMCS_BILL.invoices);
+  const list=WHMCS_BILL.invoices.map(inv=>{const {src,hit}=matches[inv.id];return {inv,src,hit,acked:!!S.whmcsAck[inv.id]};});
   const likelyPaid=list.filter(x=>x.hit&&!x.acked);
   const outstanding=list.filter(x=>!x.hit&&!x.acked);
   const reviewed=list.filter(x=>x.acked);
@@ -1327,6 +1359,8 @@ RENDER.billing=function(){
   <div class="sec-hdr"><div class="sec-t">Outstanding</div><span class="res-ct">${outstanding.length}</span></div>
   ${outstanding.length===0?`<div class="empty"><div class="empty-ic">&#10003;</div>Nothing genuinely outstanding.</div>`:
   `<table class="tbl"><thead><tr><th>Invoice</th><th>Client</th><th>Entity</th><th style="text-align:right">Amount</th><th>Due</th><th>Match</th><th></th></tr></thead><tbody>${outstanding.sort((a,b)=>daysOverdue(b.inv)-daysOverdue(a.inv)).map(x=>row(x,openBadge)).join('')}</tbody></table>`}
+  ${reviewed.length?`<div class="sec-hdr" style="margin-top:26px"><div class="sec-t">Reviewed</div><span class="res-ct">${reviewed.length}</span></div>
+  <table class="tbl"><thead><tr><th>Invoice</th><th>Client</th><th>Entity</th><th style="text-align:right">Amount</th><th>Due</th><th>Match</th><th></th></tr></thead><tbody>${reviewed.map(x=>row(x,x.hit?matchedBadge(x):openBadge)).join('')}</tbody></table>`:''}
 `;
 };
 function whmcsAck(id){
