@@ -215,7 +215,7 @@ select.form-in{cursor:pointer}
       <div class="nav-item" data-v="asst" onclick="nav('asst')"><span class="ni">&#10022;</span>Assistant</div>
       <div class="nav-item" data-v="notes" onclick="nav('notes')"><span class="ni">&#9998;</span>Dev Notes <span id="nb-ct" style="margin-left:auto;font-size:10.5px;background:var(--accent-12);color:var(--accent-h);border-radius:99px;padding:1px 7px"></span></div>
     </nav>
-    <div class="sb-user"><a href="/?pro=1" style="display:block;text-align:center;font-size:11px;color:var(--dimmed);padding:6px 0 2px;text-decoration:none" onmouseover="this.style.color='var(--accent-h)'" onmouseout="this.style.color='var(--dimmed)'">Try Pro (beta) &#8594;</a><div class="sb-user-in"><div class="av-user">SO</div><div style="min-width:0"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Sean O&#39;Byrne</div><div style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:5px">Heaventree Ltd. · <span style="color:var(--accent-h)">build 17.07-g</span> <span id="db-dot" style="width:7px;height:7px;border-radius:50%;background:#5B6373;display:inline-block" title="Turso"></span></div></div></div></div>
+    <div class="sb-user"><a href="/?pro=1" style="display:block;text-align:center;font-size:11px;color:var(--dimmed);padding:6px 0 2px;text-decoration:none" onmouseover="this.style.color='var(--accent-h)'" onmouseout="this.style.color='var(--dimmed)'">Try Pro (beta) &#8594;</a><div class="sb-user-in"><div class="av-user">SO</div><div style="min-width:0"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Sean O&#39;Byrne</div><div style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:5px">Heaventree Ltd. · <span style="color:var(--accent-h)">build 17.07-h</span> <span id="db-dot" style="width:7px;height:7px;border-radius:50%;background:#5B6373;display:inline-block" title="Turso"></span></div></div></div></div>
   </aside>
   <div id="main">
     <div class="topbar">
@@ -762,6 +762,12 @@ async function ensureLedgerSchema(){
   for(const col of ["source TEXT DEFAULT 'csv'","account_id TEXT","account_name TEXT"]){
     try{ await tq([{sql:`ALTER TABLE txn_delta ADD COLUMN ${col}`}]); }catch(e){ /* already exists */ }
   }
+  // One-time correction: rows imported by bank sync BEFORE the source column
+  // existed got backfilled to the column's DEFAULT ('csv') by SQLite itself —
+  // there was no way to know better at ALTER time. category='Other' is a safe
+  // signal for "came from a bank feed" (CSV rows almost never lack a real
+  // BudgetBakers category), so re-tag them. Idempotent: matches nothing once done.
+  try{ await tq([{sql:"UPDATE txn_delta SET source='bank' WHERE source='csv' AND category='Other' AND (account_id IS NULL OR account_id='')"}]); }catch(e){ /* best-effort */ }
   LEDGER_SCHEMA_READY=true;
 }
 function cellv(c){return (c&&c.value)||'';}
