@@ -84,9 +84,15 @@ async function handle(req: Request) {
   }
 
   return json({
-    accounts: accounts.map((a) => ({
-      id: a.id, name: a.displayName ?? a.ownerName ?? a.aspspName, iban: a.iban, currency: a.currency,
-    })),
+    accounts: accounts.map((a) => {
+      const booked = a.balances.find((b) => b.type === 'ITBD') ?? a.balances[0]
+      return {
+        id: a.id, name: a.displayName ?? a.ownerName ?? a.aspspName,
+        aspspName: a.aspspName, aspspCountry: a.aspspCountry, accountType: a.accountType,
+        iban: a.iban, currency: a.currency, needsReconnect: a.needsReconnect,
+        balance: booked ? booked.amount : null,
+      }
+    }),
     transactions,
   })
 }
