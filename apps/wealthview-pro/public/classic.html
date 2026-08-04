@@ -198,6 +198,7 @@ select.form-in{cursor:pointer}
     <nav>
       <div class="nav-sec">Analytics</div>
       <div class="nav-item active" data-v="dashboard" onclick="nav('dashboard')"><span class="ni">&#9783;</span>Dashboard</div>
+      <div class="nav-item" data-v="control" onclick="nav('control')"><span class="ni">&#127919;</span>Control Center</div>
       <div class="nav-item" data-v="networth" onclick="nav('networth')"><span class="ni">&#9670;</span>Net Worth</div>
       <div class="nav-item" data-v="cashflow" onclick="nav('cashflow')"><span class="ni">&#8646;</span>Cash Flow</div>
       <div class="nav-item" data-v="running" onclick="nav('running')"><span class="ni">&#9201;</span>Running Costs</div>
@@ -215,7 +216,7 @@ select.form-in{cursor:pointer}
       <div class="nav-item" data-v="asst" onclick="nav('asst')"><span class="ni">&#10022;</span>Assistant</div>
       <div class="nav-item" data-v="notes" onclick="nav('notes')"><span class="ni">&#9998;</span>Dev Notes <span id="nb-ct" style="margin-left:auto;font-size:10.5px;background:var(--accent-12);color:var(--accent-h);border-radius:99px;padding:1px 7px"></span></div>
     </nav>
-    <div class="sb-user"><a href="/?pro=1" style="display:block;text-align:center;font-size:11px;color:var(--dimmed);padding:6px 0 2px;text-decoration:none" onmouseover="this.style.color='var(--accent-h)'" onmouseout="this.style.color='var(--dimmed)'">Try Pro (beta) &#8594;</a><div class="sb-user-in"><div class="av-user">SO</div><div style="min-width:0"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Sean O&#39;Byrne</div><div style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:5px">Heaventree Ltd. · <span style="color:var(--accent-h)">build 17.07-h</span> <span id="db-dot" style="width:7px;height:7px;border-radius:50%;background:#5B6373;display:inline-block" title="Turso"></span></div></div></div></div>
+    <div class="sb-user"><a href="/?pro=1" style="display:block;text-align:center;font-size:11px;color:var(--dimmed);padding:6px 0 2px;text-decoration:none" onmouseover="this.style.color='var(--accent-h)'" onmouseout="this.style.color='var(--dimmed)'">Try Pro (beta) &#8594;</a><div class="sb-user-in"><div class="av-user">SO</div><div style="min-width:0"><div style="font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Sean O&#39;Byrne</div><div style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:5px">Heaventree Ltd. · <span style="color:var(--accent-h)">build 17.08-a</span> <span id="db-dot" style="width:7px;height:7px;border-radius:50%;background:#5B6373;display:inline-block" title="Turso"></span></div></div></div></div>
   </aside>
   <div id="main">
     <div class="topbar">
@@ -224,6 +225,7 @@ select.form-in{cursor:pointer}
     </div>
     <div id="content">
       <div class="view active" id="view-dashboard"></div>
+      <div class="view" id="view-control"></div>
       <div class="view" id="view-networth"></div>
       <div class="view" id="view-cashflow"></div>
       <div class="view" id="view-running"></div>
@@ -348,12 +350,14 @@ const S={view:'dashboard',range:12,vSearch:'',vType:'e',vSort:'total',
   nwHist:JSON.parse(localStorage.getItem('wv_nwhist')||'[]'),
   rSearch:'',rGroup:'',rMin:3,rSort:'avg',rDir:-1,
   owner:JSON.parse(localStorage.getItem('wv_owner')||'{}'),   // vendorId -> heaventree|personal
+  entity:JSON.parse(localStorage.getItem('wv_entity')||'{}'),      // vendorId -> entity id (see ENTITIES)
+  acctEntity:JSON.parse(localStorage.getItem('wv_acctentity')||'{}'), // bank accountId -> entity id
   amtMode:localStorage.getItem('wv_amtmode')||'last',          // last | typical
   sSearch:'',sGroup:'',sStatus:'',sSort:'cost',sOwner:'',rOwner:'',tOwner:'',
   tSearch:'',tType:'all',tGroup:'',tCat:'',tYear:'',tMin:'',tMax:'',tRec:'',tPage:1,tSort:'d',tDir:-1,
   cfYear:'',
 };
-function save(){['ov','rec','rules','assets','nwHist','owner','holdings','fx','notes','typeOv'].forEach(k=>localStorage.setItem('wv_'+(k==='nwHist'?'nwhist':k==='typeOv'?'typeov':k),JSON.stringify(S[k])));localStorage.setItem('wv_amtmode',S.amtMode);if(typeof schedulePush==='function')schedulePush();}
+function save(){['ov','rec','rules','assets','nwHist','owner','entity','acctEntity','holdings','fx','notes','typeOv'].forEach(k=>localStorage.setItem('wv_'+(k==='nwHist'?'nwhist':k==='typeOv'?'typeov':k==='acctEntity'?'acctentity':k),JSON.stringify(S[k])));localStorage.setItem('wv_amtmode',S.amtMode);if(typeof schedulePush==='function')schedulePush();}
 
 // ═════════════ HELPERS ═════════════
 const fmt=n=>new Intl.NumberFormat('en-IE',{style:'currency',currency:'EUR',minimumFractionDigits:2}).format(n);
@@ -414,6 +418,46 @@ function ownerChips(v){
 <span onclick="event.stopPropagation();setOwner('${v.id}',${o==='heaventree'?"''":"'heaventree'"})" title="Heaventree (business)" style="cursor:pointer;width:22px;height:22px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;border:1px solid ${o==='heaventree'?'var(--accent)':'var(--border)'};background:${o==='heaventree'?'var(--accent-12)':'transparent'};color:${o==='heaventree'?'var(--accent-h)':'var(--dimmed)'}">H</span>
 <span onclick="event.stopPropagation();setOwner('${v.id}',${o==='personal'?"''":"'personal'"})" title="Personal" style="cursor:pointer;width:22px;height:22px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;border:1px solid ${o==='personal'?'#EC4899':'var(--border)'};background:${o==='personal'?'rgba(236,72,153,.12)':'transparent'};color:${o==='personal'?'#F9A8D4':'var(--dimmed)'}">P</span></span>`;
 }
+// ── Entities (the actual legal/personal books money moves through) ─────────
+// A richer layer alongside the existing H/P owner chips, not a replacement —
+// owner keeps working everywhere it already does. Entity assignment lives on
+// the vendor (cascades to every transaction under it) and, for bank accounts,
+// on the account itself (S.acctEntity) so every bank-synced transaction has a
+// sensible default the moment the account is connected.
+const ENTITIES=[
+  {id:'personal',name:'Personal',country:'IE',color:'#EC4899'},
+  {id:'sole_trader',name:'Sole Trader (IE)',country:'IE',color:'#F59E0B'},
+  {id:'ht_marketing',name:'Heaventree Marketing & Design Ltd',country:'UK',color:'#6366F1'},
+  {id:'ht_digital',name:'Heaventree Digital Ltd',country:'UK',color:'#0EA5E9'},
+  {id:'ht_gibraltar',name:'Heaventree Ltd (Gibraltar)',country:'GI',color:'#22C55E'},
+];
+const ENTITY_BY_ID={};ENTITIES.forEach(e=>ENTITY_BY_ID[e.id]=e);
+function entityOf(v){return S.entity[v.id]||'';}
+function setEntity(id,e){if(e)S.entity[id]=e;else delete S.entity[id];save();if(RENDER[S.view])RENDER[S.view]();toast('Entity → '+(e?ENTITY_BY_ID[e].name:'unassigned'));}
+function entitySelect(v,extraAttrs){
+  const cur=entityOf(v);
+  return `<select class="flt" style="height:26px;font-size:11px" ${extraAttrs||''} onchange="event.stopPropagation();setEntity('${v.id}',this.value)">
+    <option value=""${cur?'':' selected'}>— Unassigned</option>
+    ${ENTITIES.map(e=>`<option value="${e.id}"${cur===e.id?' selected':''}>${esc(e.name)}</option>`).join('')}
+  </select>`;
+}
+// A transaction's entity: an explicit vendor-level tag always wins (covers the
+// occasional business expense on a personal card); otherwise a bank-synced
+// row inherits whatever entity its account was assigned; otherwise unassigned.
+function txEntity(t){
+  const v=V[t.v];
+  if(v&&S.entity[v.id])return S.entity[v.id];
+  if(t.src==='bank'&&t.acctId&&S.acctEntity[t.acctId])return S.acctEntity[t.acctId];
+  return '';
+}
+function setAcctEntity(id,e){if(e)S.acctEntity[id]=e;else delete S.acctEntity[id];save();if(RENDER[S.view])RENDER[S.view]();}
+function acctEntitySelect(a){
+  const cur=S.acctEntity[a.id]||'';
+  return `<select class="flt" style="height:26px;font-size:11px;width:100%" onchange="setAcctEntity('${a.id}',this.value)">
+    <option value=""${cur?'':' selected'}>— Assign entity</option>
+    ${ENTITIES.map(e=>`<option value="${e.id}"${cur===e.id?' selected':''}>${esc(e.name)}</option>`).join('')}
+  </select>`;
+}
 function vStatus(v){
   if(S.ov[v.id])return S.ov[v.id];
   const days=(new Date(CURM+'-28')-new Date(v.last))/864e5;
@@ -466,13 +510,13 @@ function amtSign(t){return t==='i'?'+':t==='x'?'⇄':'-';}
 let DB_OK=null, _pushT=null;
 const SYNC_GET={
   ov:()=>S.ov, rec:()=>S.rec, rules:()=>S.rules, assets:()=>S.assets,
-  nwHist:()=>S.nwHist, owner:()=>S.owner, holdings:()=>S.holdings,
+  nwHist:()=>S.nwHist, owner:()=>S.owner, entity:()=>S.entity, acctEntity:()=>S.acctEntity, holdings:()=>S.holdings,
   notes:()=>S.notes, typeOv:()=>S.typeOv, names:()=>S2.names,
   merges:()=>S2.merges, amtMode:()=>S.amtMode,
 };
 const SYNC_SET={
   ov:v=>S.ov=v, rec:v=>S.rec=v, rules:v=>S.rules=v, assets:v=>S.assets=v,
-  nwHist:v=>S.nwHist=v, owner:v=>S.owner=v, holdings:v=>S.holdings=v,
+  nwHist:v=>S.nwHist=v, owner:v=>S.owner=v, entity:v=>S.entity=v, acctEntity:v=>S.acctEntity=v, holdings:v=>S.holdings=v,
   notes:v=>S.notes=v, typeOv:v=>S.typeOv=v, names:v=>S2.names=v,
   merges:v=>S2.merges=v, amtMode:v=>S.amtMode=v,
 };
@@ -856,7 +900,7 @@ async function loadBankAccounts(){
   }catch(e){return null;}
 }
 // ═════════════ NAV ═════════════
-const TITLES={dashboard:['Overview','Dashboard'],networth:['Wealth','Net Worth'],cashflow:['Money In / Out','Cash Flow'],
+const TITLES={dashboard:['Overview','Dashboard'],control:['All entities','Control Center'],networth:['Wealth','Net Worth'],cashflow:['Money In / Out','Cash Flow'],
   running:['Burn Rate','Running Costs'],subs:['Recurring','Subscriptions'],vendors:['Directory','Vendors'],tx:['Ledger','Transactions'],
   cats:['Breakdown','Categories'],ltd:['AppSumo','Lifetime Deals'],import:['Data','Import'],bank:['Data','Bank'],rules:['Automation','Rules Engine'],notes:['Feedback','Dev Notes'],asst:['AI','Assistant']};
 const RENDER={};
@@ -1035,7 +1079,8 @@ RENDER.bank=function(){
       </div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:12px">${esc(a.aspspName||'')}${a.aspspCountry?' · '+esc(a.aspspCountry):''}${maskedIban?' · '+maskedIban:''}</div>
       <div class="mono" style="font-size:19px;font-weight:600">${bal}</div>
-      <div style="font-size:10.5px;color:var(--dimmed);margin-top:3px">${esc(a.currency||'')}${a.accountType?' · '+esc(a.accountType):''}</div>
+      <div style="font-size:10.5px;color:var(--dimmed);margin-top:3px;margin-bottom:10px">${esc(a.currency||'')}${a.accountType?' · '+esc(a.accountType):''}</div>
+      ${acctEntitySelect(a)}
     </div>`;
   }).join(''):`<div class="empty" style="grid-column:1/-1"><div class="empty-ic">&#127974;</div><div>No connected accounts yet.</div><button class="btn btn-primary btn-sm" onclick="nav('import')">Go to Data → Import</button></div>`;
 
@@ -1043,7 +1088,8 @@ RENDER.bank=function(){
 
   const rows=filtered.slice(0,300).map(t=>{
     const v=V[t.v];
-    return `<tr><td class="mono" style="color:var(--muted)">${fmtD(t.d)}</td><td>${esc(v.name)}</td><td style="color:var(--muted)">${esc(t.acctName||'—')}</td><td style="color:var(--muted)">${esc(CATS[t.c].name)}</td><td class="mono" style="text-align:right;font-weight:600;color:${amtCol(t.t)}">${amtSign(t.t)}${fmt(t.a)}</td></tr>`;
+    const eid=txEntity(t),ent=eid?ENTITY_BY_ID[eid]:null;
+    return `<tr><td class="mono" style="color:var(--muted)">${fmtD(t.d)}</td><td>${esc(v.name)}</td><td style="color:var(--muted)">${esc(t.acctName||'—')}</td><td>${ent?`<span class="badge" style="background:${ent.color}1F;color:${ent.color}"><span class="bdot" style="background:${ent.color}"></span>${esc(ent.name)}</span>`:`<span style="color:var(--dimmed);font-size:11px">Unassigned</span>`}</td><td class="mono" style="text-align:right;font-weight:600;color:${amtCol(t.t)}">${amtSign(t.t)}${fmt(t.a)}</td></tr>`;
   }).join('');
 
   el.innerHTML=`
@@ -1057,8 +1103,63 @@ RENDER.bank=function(){
     <select class="flt" onchange="BANK_STATE.acct=this.value;RENDER.bank()"><option value="">All accounts</option>${acctOptions}</select>
   </div>
   ${bankTx.length===0?`<div class="empty"><div class="empty-ic">&#127974;</div>No bank-synced transactions yet — sync from Data → Import.</div>`:
-  `<table class="tbl"><thead><tr><th>Date</th><th>Payee</th><th>Account</th><th>Category</th><th style="text-align:right">Amount</th></tr></thead><tbody>${rows}</tbody></table>
+  `<table class="tbl"><thead><tr><th>Date</th><th>Payee</th><th>Account</th><th>Entity</th><th style="text-align:right">Amount</th></tr></thead><tbody>${rows}</tbody></table>
   ${filtered.length>300?`<div style="text-align:center;font-size:11px;color:var(--dimmed);padding:10px">+${filtered.length-300} more — narrow your search</div>`:''}`}
+`;
+};
+
+// ═════════════ CONTROL CENTER ═════════════
+// The single "everything, everywhere" desktop: this-month net per entity
+// (across every source — base history, CSV imports, bank sync alike, via
+// txEntity()) plus a triage queue of vendors nobody's assigned to a book yet,
+// sorted by spend so the highest-impact ones get handled first.
+let CTRL_STATE={search:''};
+function entityStats(){
+  const stats={};ENTITIES.forEach(e=>stats[e.id]={mInc:0,mExp:0,count:0});
+  let unassigned=0,unassignedMo=0;
+  TX.forEach(t=>{
+    const eid=txEntity(t);
+    const inMonth=t.d.slice(0,7)===CURM;
+    if(!eid){unassigned++;if(inMonth)unassignedMo++;return;}
+    const s=stats[eid];if(!s)return;
+    s.count++;
+    if(inMonth){if(t.t==='i')s.mInc+=t.a;else if(t.t!=='x')s.mExp+=t.a;}
+  });
+  return {stats,unassigned,unassignedMo};
+}
+RENDER.control=function(){
+  const el=document.getElementById('view-control');
+  const {stats,unassigned,unassignedMo}=entityStats();
+  const cards=ENTITIES.map(e=>{
+    const s=stats[e.id],net=s.mInc-s.mExp;
+    return `<div class="card" style="padding:16px;border-left:3px solid ${e.color}">
+      <div style="font-size:12.5px;font-weight:600;margin-bottom:2px">${esc(e.name)}</div>
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:10px">${esc(e.country)} · ${s.count} transaction${s.count!==1?'s':''}</div>
+      <div class="mono" style="font-size:18px;font-weight:600;color:${net>=0?'var(--income-t)':'var(--expense-t)'}">${net>=0?'+':''}${fmt0(net)}</div>
+      <div style="font-size:10.5px;color:var(--dimmed);margin-top:3px">${fmtM(CURM)} · in ${fmt0(s.mInc)} · out ${fmt0(s.mExp)}</div>
+    </div>`;
+  }).join('');
+
+  const unassignedVendors=V.filter(v=>!v.absorbed&&v.count>0&&!entityOf(v)).sort((a,b)=>b.total-a.total);
+  const q=CTRL_STATE.search.trim().toLowerCase();
+  const filteredUnassigned=q?unassignedVendors.filter(v=>v.name.toLowerCase().includes(q)):unassignedVendors;
+  const rows=filteredUnassigned.slice(0,80).map(v=>`<tr class="rowh"><td style="width:34px">${avHtml(v,26)}</td><td>${esc(v.name)}</td><td style="color:var(--muted)">${esc(v.group)}</td><td class="mono" style="text-align:right">${v.count}×</td><td class="mono" style="text-align:right;font-weight:600">${fmt(v.total)}</td><td style="width:220px">${entitySelect(v)}</td></tr>`).join('');
+
+  el.innerHTML=`
+  <div class="sec-hdr"><div><div class="sec-t">By entity</div><div class="sec-s">${fmtM(CURM)} net cashflow, everything already synced</div></div></div>
+  <div class="cards-grid" style="margin-bottom:26px">${cards}
+    <div class="card" style="padding:16px;border-left:3px solid var(--dimmed)">
+      <div style="font-size:12.5px;font-weight:600;margin-bottom:2px">Unassigned</div>
+      <div style="font-size:10.5px;color:var(--muted);margin-bottom:10px">Needs a call — see below</div>
+      <div class="mono" style="font-size:18px;font-weight:600;color:var(--warn)">${unassigned}</div>
+      <div style="font-size:10.5px;color:var(--dimmed);margin-top:3px">${unassignedMo} this month</div>
+    </div>
+  </div>
+  <div class="sec-hdr"><div class="sec-t">Unassigned vendors</div><span class="res-ct">${filteredUnassigned.length} of ${unassignedVendors.length}</span></div>
+  <div class="filter-bar"><div class="srch"><span class="si">&#128269;</span><input id="srch-ctrl" placeholder="Search vendors…" value="${esc(CTRL_STATE.search)}" oninput="CTRL_STATE.search=this.value;deb(RENDER.control,'srch-ctrl')"></div></div>
+  ${unassignedVendors.length===0?`<div class="empty"><div class="empty-ic">&#10003;</div>Everything's assigned to an entity.</div>`:
+  `<table class="tbl"><thead><tr><th></th><th>Vendor</th><th>Group</th><th style="text-align:right">Charges</th><th style="text-align:right">Total</th><th>Assign to</th></tr></thead><tbody>${rows}</tbody></table>
+  ${filteredUnassigned.length>80?`<div style="text-align:center;font-size:11px;color:var(--dimmed);padding:10px">+${filteredUnassigned.length-80} more — narrow your search</div>`:''}`}
 `;
 };
 function nav(v){
