@@ -19,6 +19,9 @@
 | `DEEPSEEK_KEY` | optional — injected into `/classic.html` at build time so the AI assistant works with no manual setup |
 | `BRANDFETCH_KEY` | optional — injected into `/classic.html` at build time for vendor logos |
 | `ALLOW_DEV_CODE` | optional, `1` — shows the login code on screen instead of emailing (testing only, remove after) |
+| `WHMCS_API_URL` | optional, enables Billing view — full API endpoint, e.g. `https://billing.example.com/includes/api.php` |
+| `WHMCS_API_IDENTIFIER` | optional — Setup → Staff Management → API Credentials → API Identifier |
+| `WHMCS_API_SECRET` | optional — same page, the **raw** Secret Key. Deliberately **not** injected into the classic.html bundle like the keys above — `netlify/functions/whmcs-call.mts` is the only thing that ever sees it, so it never reaches the browser |
 
 Set every variable to **"Same value in all deploy contexts"** — a
 value scoped to only one context (e.g. Deploy Previews) will be blank
